@@ -1,0 +1,64 @@
+[project]
+name = "semantic-db"
+version = "0.1.0"
+description = "Semantic search over user-defined structured records"
+authors = [{ name = "Patryk Makuch" }]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.14",
+    "asyncpg>=0.30",
+    "httpx>=0.28",
+    "pgvector>=0.3.6",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "questionary>=2.0",
+    "rich>=13.9",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "typer>=0.15",
+]
+
+[project.scripts]
+semantic-db = "semantic_db.cli.main:app"
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.1",
+    "mypy>=1.14",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.9",
+    "testcontainers[postgres]>=4.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/semantic_db"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*", "questionary.*", "pgvector.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: needs Postgres and/or Ollama",
+]

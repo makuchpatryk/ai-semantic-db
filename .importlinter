@@ -1,0 +1,52 @@
+[importlinter]
+root_package = semantic_db
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = Clean Architecture layer order
+type = layers
+; cli is the entrypoint and calls the composition root, so container sits below it.
+layers =
+    semantic_db.cli
+    semantic_db.container
+    semantic_db.infrastructure
+    semantic_db.application
+    semantic_db.domain
+
+[importlinter:contract:domain-is-framework-free]
+name = domain imports no frameworks
+type = forbidden
+source_modules =
+    semantic_db.domain
+forbidden_modules =
+    sqlalchemy
+    typer
+    httpx
+    questionary
+    rich
+    alembic
+    pydantic_settings
+
+[importlinter:contract:application-is-framework-free]
+name = application imports no frameworks
+type = forbidden
+source_modules =
+    semantic_db.application
+forbidden_modules =
+    sqlalchemy
+    typer
+    httpx
+    questionary
+    rich
+    alembic
+    pydantic_settings
+
+[importlinter:contract:cli-does-not-reach-infrastructure]
+name = cli wires through the container only
+type = forbidden
+source_modules =
+    semantic_db.cli
+forbidden_modules =
+    semantic_db.infrastructure
+; the container is allowed to reach infrastructure; the cli is not allowed to do it directly
+allow_indirect_imports = True

@@ -1,0 +1,23 @@
+{
+  "skill_name": "book-planning",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We need to add user roles and permissions to our SaaS app. Right now everyone who logs in can see and edit everything. We want admins to control access — some users read-only, some can edit, some are super-admins. We're using Express.js backend and React frontend. Can you plan this out?",
+      "expected_output": "Comprehensive plan with permission model design, database schema changes, API changes for authorization checks, frontend permission checks, step-by-step implementation, tests, and risks",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Our main database table has grown to 10M rows and queries are getting slow. We want to add caching to speed things up. We're using PostgreSQL and Node.js. Can you create a plan for adding Redis caching? What should we cache? How do we keep it fresh?",
+      "expected_output": "Plan covering cache architecture, what to cache and why, invalidation strategy, Redis setup, code changes, performance testing approach, risks like cache misses, and rollback plan",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Planning a complete rewrite of our authentication from email/password to OAuth2 with GitHub and Google. Our Python backend uses Flask. Users expect seamless migration — don't want to force reauth. This is high-priority. What's the roadmap?",
+      "expected_output": "Plan addressing OAuth2 flow, dual-auth period (old and new coexist), user migration strategy, session management changes, security considerations, backward-compatibility, testing approach, and timeline",
+      "files": []
+    }
+  ]
+}
