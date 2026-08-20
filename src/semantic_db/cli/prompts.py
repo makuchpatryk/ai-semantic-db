@@ -175,9 +175,19 @@ def _ask_text_field(label: str, prev: PayloadValue | None = None) -> str | None:
 
 def _has_editor_env() -> bool:
     """Check if we have an editor and a TTY to use it."""
-    has_editor = bool(os.environ.get("EDITOR") or os.environ.get("VISUAL"))
+    # Check explicit EDITOR/VISUAL env vars, or fall back to common editors
+    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
+    if not editor:
+        # Try common editors
+        import shutil
+
+        for cmd in ["vim", "nano", "vi", "code", "emacs"]:
+            if shutil.which(cmd):
+                editor = cmd
+                break
+
     has_tty = sys.stdin.isatty()
-    return has_editor and has_tty
+    return bool(editor) and has_tty
 
 
 def _ask_enum(label: str, field: FieldDefinition, prev: PayloadValue | None = None) -> str | None:
