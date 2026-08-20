@@ -45,11 +45,13 @@ def prompt_record_values(
     """
     defaults = defaults or {}
     result: Payload = {}
+    is_first_field = True
 
     for field in schema.fields:
         while True:
             try:
-                value = _prompt_field(field, defaults.get(field.name))
+                value = _prompt_field(field, defaults.get(field.name), is_first_field)
+                is_first_field = False
                 if value is not None or not field.required:
                     if value is not None:
                         result[field.name] = value
@@ -126,9 +128,17 @@ def _ask_choices(question: Any) -> list[str]:
 
 
 def _prompt_field(
-    field: FieldDefinition, prev_default: PayloadValue | None = None
+    field: FieldDefinition,
+    prev_default: PayloadValue | None = None,
+    is_first: bool = False,
 ) -> PayloadValue | None:
     """Prompt for a single field value, coercing and re-prompting on error."""
+    if is_first:
+        console.print(
+            "[dim]Text fields: Enter for newline, Alt+Enter to finish."
+            " Required fields marked with *[/]\n"
+        )
+
     label = f"{field.label}{'*' if field.required else ''}"
     if field.type in UNIT_TYPES and field.unit:
         label = f"{label} ({field.unit})"
@@ -155,10 +165,6 @@ def _prompt_field(
 def _ask_text_field(label: str, prev: PayloadValue | None = None) -> str | None:
     """Prompt for multiline text in terminal."""
     default_text = str(prev) if prev else ""
-
-    console.print(
-        f"[cyan]{label}[/] [dim](multiline: Enter for newline, Alt+Enter to finish)[/]"
-    )
     raw = _ask_text_from(questionary.text(label, multiline=True, default=default_text))
     return raw if raw else None
 
