@@ -1,10 +1,7 @@
-import os
-import sys
 from datetime import date
 from typing import Any, cast
 
 import questionary
-from click import edit as click_edit
 
 from semantic_db.cli.runner import console, error_console
 from semantic_db.domain.collection import CollectionSchema, FieldDefinition
@@ -156,38 +153,14 @@ def _prompt_field(
 
 
 def _ask_text_field(label: str, prev: PayloadValue | None = None) -> str | None:
-    """Prompt for multiline text using editor (Ctrl+Enter for newline, Ctrl+D/save to submit)."""
+    """Prompt for multiline text in terminal."""
     default_text = str(prev) if prev else ""
 
-    if _has_editor_env():
-        console.print(f"[cyan]{label}[/] (opening editor, Ctrl+Enter for newline)")
-        try:
-            result = click_edit(default_text)
-            if result is not None:
-                return result.strip() if result.strip() else None
-        except Exception as e:
-            error_console.print(f"[yellow]Editor failed: {e}, falling back to text input[/]")
-
-    console.print(f"[cyan]{label}[/] (multiline, Alt+Enter or Esc+Enter to finish)")
+    console.print(
+        f"[cyan]{label}[/] [dim](multiline: Enter for newline, Alt+Enter to finish)[/]"
+    )
     raw = _ask_text_from(questionary.text(label, multiline=True, default=default_text))
     return raw if raw else None
-
-
-def _has_editor_env() -> bool:
-    """Check if we have an editor and a TTY to use it."""
-    # Check explicit EDITOR/VISUAL env vars, or fall back to common editors
-    editor = os.environ.get("EDITOR") or os.environ.get("VISUAL")
-    if not editor:
-        # Try common editors
-        import shutil
-
-        for cmd in ["vim", "nano", "vi", "code", "emacs"]:
-            if shutil.which(cmd):
-                editor = cmd
-                break
-
-    has_tty = sys.stdin.isatty()
-    return bool(editor) and has_tty
 
 
 def _ask_enum(label: str, field: FieldDefinition, prev: PayloadValue | None = None) -> str | None:
