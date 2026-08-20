@@ -17,12 +17,12 @@ def test_bare_field_has_no_flags() -> None:
 
 
 def test_flags_are_comma_separated() -> None:
-    field = parse_field_spec("title:string:embed,required")
+    field = parse_field_spec("title:text:embed,required")
     assert (field.embed, field.required) == (True, True)
 
 
 def test_flags_may_be_separate_segments() -> None:
-    field = parse_field_spec("title:string:embed:required")
+    field = parse_field_spec("title:text:embed:required")
     assert (field.embed, field.required) == (True, True)
 
 
@@ -43,14 +43,14 @@ def test_array_type_is_parsed_despite_its_brackets() -> None:
     ("spec", "message"),
     [
         ("title", "expected name:type"),
-        (":string:embed", "expected name:type"),
+        (":text:embed", "expected name:type"),
         ("title:strng", "unknown type 'strng'"),
         ("category:enum:embed", "enum needs its values inline"),
         ("category:enum():embed", "enum declares no values"),
-        ("title:string:embeded", "unknown flag 'embeded'"),
+        ("title:text:embeded", "unknown flag 'embeded'"),
         ("price:float:embed:currency=PLN", "unknown option 'currency'"),
-        ("Title:string:embed", "field name 'Title'"),
-        ("title:string:embed:unit=PLN", "unit is only allowed"),
+        ("Title:text:embed", "field name 'Title'"),
+        ("title:text:embed:unit=PLN", "unit is only allowed"),
     ],
 )
 def test_rejects_malformed_specs(spec: str, message: str) -> None:

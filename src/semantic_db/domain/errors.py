@@ -54,3 +54,13 @@ class PayloadValidationError(PayloadError):
 
 class EmbeddingUnavailableError(SemanticDbError):
     """The embedding provider could not be reached or answered unusably."""
+
+
+class EmbeddingModelMismatchError(SemanticDbError):
+    """The collection was embedded with a different model than the current settings."""
+
+    def __init__(self, collection: str, stored: str, current: str) -> None:
+        super().__init__(
+            f"collection '{collection}' was embedded with {stored}, "
+            f"current model is {current}; re-embed the collection or switch the model back"
+        )

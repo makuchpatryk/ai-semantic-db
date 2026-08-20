@@ -1,7 +1,7 @@
 from typing import Protocol
 
 from semantic_db.domain.collection import Collection
-from semantic_db.domain.record import Record
+from semantic_db.domain.record import Record, ScoredRecord
 
 # Three ports, no fourth: a port earns its place only with a second implementation or a
 # test that needs the seam (PRD 9.1). Methods are added as their milestone lands, so
@@ -23,3 +23,7 @@ class CollectionRepository(Protocol):
 
 class RecordRepository(Protocol):
     async def add(self, collection_id: int, record: Record, vec: list[float]) -> Record: ...
+
+    async def search(self, collection_id: int, vec: list[float], k: int) -> list[ScoredRecord]: ...
+
+    async def embedding_models(self, collection_id: int) -> frozenset[str]: ...

@@ -349,7 +349,7 @@ Pydantic is permitted in `domain`: validating a payload against a declared schem
 
 ### 9.1 Ports
 
-```python
+```python/
 from typing import Protocol
 
 class EmbeddingProvider(Protocol):

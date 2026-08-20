@@ -2,8 +2,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
+from semantic_db.application.queries import Queries
 from semantic_db.application.use_cases.add_record import AddRecord
 from semantic_db.application.use_cases.create_collection import CreateCollection
+from semantic_db.application.use_cases.search_records import SearchRecords
 from semantic_db.infrastructure.db.session import create_engine, create_session_factory
 from semantic_db.infrastructure.ollama import OllamaEmbeddingProvider
 from semantic_db.infrastructure.repositories import SqlCollectionRepository, SqlRecordRepository
@@ -16,6 +18,8 @@ class Container:
 
     create_collection: CreateCollection
     add_record: AddRecord
+    search_records: SearchRecords
+    queries: Queries
     embedding_model: str
 
 
@@ -37,6 +41,8 @@ async def build_container(settings: Settings | None = None) -> AsyncIterator[Con
         yield Container(
             create_collection=CreateCollection(collections),
             add_record=AddRecord(collections, records, embedder),
+            search_records=SearchRecords(collections, records, embedder),
+            queries=Queries(collections),
             embedding_model=settings.embedding_model,
         )
     finally:

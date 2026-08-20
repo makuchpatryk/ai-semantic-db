@@ -16,3 +16,8 @@ def print_schema_preview(schema: CollectionSchema) -> None:
 
 def print_record_preview(schema: CollectionSchema, payload: Mapping[str, PayloadValue]) -> None:
     console.print(Panel(render(schema, payload), title="Preview", title_align="left"))
+
+
+def preview_panel(schema: CollectionSchema, payload: Mapping[str, PayloadValue]) -> Panel:
+    """Return a Panel with the rendered record."""
+    return Panel(render(schema, payload), title="Preview", title_align="left")

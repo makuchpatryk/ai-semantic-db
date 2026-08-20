@@ -85,6 +85,6 @@ def test_preview_uses_placeholders_for_embedded_fields_only() -> None:
 
 def test_empty_payload_renders_empty_string() -> None:
     schema = CollectionSchema(
-        fields=(FieldDefinition(name="title", type=FieldType.STRING, embed=True),)
+        fields=(FieldDefinition(name="title", type=FieldType.TEXT, embed=True),)
     )
     assert render(schema, {}) == ""

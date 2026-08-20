@@ -31,13 +31,18 @@ def coerce_payload(schema: CollectionSchema, raw: Mapping[str, object]) -> Paylo
             if field.required:
                 raise MissingRequiredFieldError(field.name)
             continue
-        payload[field.name] = _coerce(field, raw[field.name])
+        payload[field.name] = coerce_value(field, raw[field.name])
     return payload
 
 
-def _coerce(field: FieldDefinition, value: object) -> PayloadValue:
+def coerce_value(field: FieldDefinition, value: object) -> PayloadValue:
+    """Coerce a single value to its field's declared type.
+
+    Used by prompts to validate input one field at a time with early error feedback,
+    and by coerce_payload as the validation authority.
+    """
     match field.type:
-        case FieldType.STRING | FieldType.TEXT:
+        case FieldType.TEXT:
             return str(value)
         case FieldType.ENUM:
             return _coerce_enum(field, value)
@@ -51,6 +56,8 @@ def _coerce(field: FieldDefinition, value: object) -> PayloadValue:
             return _coerce_date(field, value)
         case FieldType.ARRAY_STRING:
             return _coerce_array(value)
+        case _:
+            raise AssertionError(f"unknown field type {field.type}")
 
 
 def _coerce_enum(field: FieldDefinition, value: object) -> str:

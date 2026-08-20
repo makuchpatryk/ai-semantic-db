@@ -37,7 +37,7 @@ def test_bad_field_spec_exits_two_without_touching_the_database() -> None:
 
 
 def test_schema_without_an_embedded_field_is_rejected() -> None:
-    result = runner.invoke(app, ["collection", "create", "products", "--field", "title:string"])
+    result = runner.invoke(app, ["collection", "create", "products", "--field", "title:text"])
     assert result.exit_code == VALIDATION_EXIT_CODE
     assert "at least one field must be embedded" in output_of(result)
 

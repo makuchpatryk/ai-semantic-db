@@ -47,7 +47,7 @@ def script(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 PRODUCTS_SCRIPT: list[object] = [
     "title",
-    "string",
+    "text",
     [EMBED, REQUIRED],
     "description",
     "text",
@@ -83,7 +83,7 @@ def test_empty_name_ends_the_loop_immediately(script: Any) -> None:
 
 
 def test_invalid_field_is_reprompted_not_fatal(script: Any) -> None:
-    script(["Title", "string", [EMBED], "title", "string", [EMBED], ""])
+    script(["Title", "text", [EMBED], "title", "text", [EMBED], ""])
 
     fields = prompts.prompt_field_definitions()
 

@@ -6,7 +6,7 @@ from semantic_db.domain.field_types import FieldType
 
 
 def field(name: str = "title", **kwargs: object) -> FieldDefinition:
-    defaults: dict[str, object] = {"type": FieldType.STRING, "embed": True}
+    defaults: dict[str, object] = {"type": FieldType.TEXT, "embed": True}
     return FieldDefinition(name=name, **{**defaults, **kwargs})
 
 

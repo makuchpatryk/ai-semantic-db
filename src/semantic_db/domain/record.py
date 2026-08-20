@@ -22,4 +22,4 @@ class ScoredRecord:
     """A search hit. Declared here so ports stay stable; first used by search (M5)."""
 
     record: Record
-    score: float
+    distance: float

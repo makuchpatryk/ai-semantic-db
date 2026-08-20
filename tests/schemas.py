@@ -3,7 +3,7 @@ from semantic_db.domain.field_types import FieldType
 
 PRODUCTS = CollectionSchema(
     fields=(
-        FieldDefinition(name="title", type=FieldType.STRING, embed=True, required=True),
+        FieldDefinition(name="title", type=FieldType.TEXT, embed=True, required=True),
         FieldDefinition(name="description", type=FieldType.TEXT, embed=True),
         FieldDefinition(
             name="category",
@@ -19,16 +19,16 @@ PRODUCTS = CollectionSchema(
 #: A deliberately different shape (PRD 12): exercises date and array<string>.
 BOOKS = CollectionSchema(
     fields=(
-        FieldDefinition(name="author", type=FieldType.STRING, embed=True, required=True),
+        FieldDefinition(name="author", type=FieldType.TEXT, embed=True, required=True),
         FieldDefinition(name="published", type=FieldType.DATE, embed=True),
         FieldDefinition(name="genres", type=FieldType.ARRAY_STRING, embed=True),
         FieldDefinition(name="in_print", type=FieldType.BOOL, embed=True),
-        FieldDefinition(name="shelf_code", type=FieldType.STRING),
+        FieldDefinition(name="shelf_code", type=FieldType.TEXT),
     )
 )
 
 PRODUCTS_FIELD_SPECS = [
-    "title:string:embed,required",
+    "title:text:embed,required",
     "description:text:embed",
     "category:enum(pumps|motors|valves|sensors):embed",
     "year:int:embed",
@@ -36,9 +36,9 @@ PRODUCTS_FIELD_SPECS = [
 ]
 
 BOOKS_FIELD_SPECS = [
-    "author:string:embed,required",
+    "author:text:embed,required",
     "published:date:embed",
     "genres:array<string>:embed",
     "in_print:bool:embed",
-    "shelf_code:string",
+    "shelf_code:text",
 ]
