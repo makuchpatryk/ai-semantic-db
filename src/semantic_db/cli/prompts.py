@@ -156,19 +156,19 @@ def _prompt_field(
 
 
 def _ask_text_field(label: str, prev: PayloadValue | None = None) -> str | None:
-    """Prompt for a multiline text value, trying editor first."""
+    """Prompt for multiline text using editor (Ctrl+Enter for newline, Ctrl+D/save to submit)."""
     default_text = str(prev) if prev else ""
 
-    # Try click.edit() if we have a proper editor environment
     if _has_editor_env():
+        console.print(f"[cyan]{label}[/] (opening editor, Ctrl+Enter for newline)")
         try:
             result = click_edit(default_text)
             if result is not None:
                 return result.strip() if result.strip() else None
-        except Exception:
-            pass
+        except Exception as e:
+            error_console.print(f"[yellow]Editor failed: {e}, falling back to text input[/]")
 
-    # Fallback to multiline questionary
+    console.print(f"[cyan]{label}[/] (multiline, Alt+Enter or Esc+Enter to finish)")
     raw = _ask_text_from(questionary.text(label, multiline=True, default=default_text))
     return raw if raw else None
 
