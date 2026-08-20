@@ -22,7 +22,7 @@ forbidden_modules =
     sqlalchemy
     typer
     httpx
-    questionary
+    prompt_toolkit
     rich
     alembic
     pydantic_settings
@@ -36,7 +36,7 @@ forbidden_modules =
     sqlalchemy
     typer
     httpx
-    questionary
+    prompt_toolkit
     rich
     alembic
     pydantic_settings
