@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:      # "Run workflow" button in the Actions tab
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-groups
+      - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
+
+  types:
+    name: types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-groups
+      - run: uv run mypy
+
+  architecture:
+    name: architecture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-groups
+      - run: uv run lint-imports
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-groups
+      - run: uv run pytest -m "not integration"
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    # Postgres as a service container, not testcontainers: the runner pulls the image once
+    # and reuses it for the job. The tests read SEMANTIC_DB_DATABASE_URL either way (PRD 11).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: semantic
+          POSTGRES_PASSWORD: semantic
+          POSTGRES_DB: semantic_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U semantic -d semantic_db"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      SEMANTIC_DB_DATABASE_URL: postgresql+asyncpg://semantic:semantic@localhost:5432/semantic_db
+      # Must match settings.embedding_model: the vec column is halfvec(1024).
+      EMBEDDING_MODEL: bge-m3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-groups
+
+      # `record add` embeds on save, so the end-to-end tests need a real Ollama. The model
+      # is the expensive part (~1.2GB), so it is cached; the daemon itself installs in seconds.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-models-${{ env.EMBEDDING_MODEL }}
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve > /tmp/ollama.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:11434/api/tags > /dev/null && exit 0
+            sleep 1
+          done
+          echo "ollama did not come up" && cat /tmp/ollama.log && exit 1
+      - name: Pull the embedding model
+        run: ollama pull "$EMBEDDING_MODEL"
+
+      - run: uv run pytest -m integration
+      # Catches SQLAlchemy models edited without a matching migration.
+      - run: uv run alembic check

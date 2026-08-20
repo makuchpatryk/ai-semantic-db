@@ -20,23 +20,37 @@ IMAGE = "pgvector/pgvector:pg17"
 def database_url() -> Iterator[str]:
     """One migrated Postgres for the whole session.
 
-    The URL is exported so the CLI's own settings pick it up — test code never
-    branches on where the database came from (PRD 11).
+    An already-running database wins if `SEMANTIC_DB_DATABASE_URL` is set — that is how CI
+    reaches its service container (PRD 11). Otherwise testcontainers starts one, which is
+    what happens locally. Either way the URL is exported so the CLI's own settings pick it
+    up, and the tests themselves never branch on where the database came from.
     """
+    provided = os.environ.get("SEMANTIC_DB_DATABASE_URL")
+    if provided:
+        get_settings.cache_clear()  # alembic's env.py reads the URL through the same cache
+        _migrate()
+        yield provided
+        get_settings.cache_clear()
+        return
+
     with PostgresContainer(IMAGE, driver="asyncpg") as postgres:
         url = postgres.get_connection_url()
         os.environ["SEMANTIC_DB_DATABASE_URL"] = url
         get_settings.cache_clear()
 
-        config = Config(str(REPO_ROOT / "alembic.ini"))
-        config.set_main_option(
-            "script_location", str(REPO_ROOT / "src/semantic_db/infrastructure/db/migrations")
-        )
-        command.upgrade(config, "head")
+        _migrate()
 
         yield url
 
         get_settings.cache_clear()
+
+
+def _migrate() -> None:
+    config = Config(str(REPO_ROOT / "alembic.ini"))
+    config.set_main_option(
+        "script_location", str(REPO_ROOT / "src/semantic_db/infrastructure/db/migrations")
+    )
+    command.upgrade(config, "head")
 
 
 @pytest.fixture
