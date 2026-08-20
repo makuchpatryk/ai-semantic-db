@@ -9,10 +9,7 @@ from semantic_db.cli.runner import console, run
 from semantic_db.domain.collection import CollectionSchema
 from semantic_db.domain.record import PayloadValue
 
-search_app = typer.Typer(help="Search for records.")
 
-
-@search_app.command()
 def search(
     collection: Annotated[str, typer.Argument(help="Collection name")],
     query: Annotated[str, typer.Argument(help="Search query")],
