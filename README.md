@@ -1,12 +1,29 @@
 # semantic-db
 
-Local CLI for **semantic search over user-defined structured records**. Define a schema, add
-records against it, search them in natural language. Postgres + pgvector for storage, Ollama for
-embeddings. No API keys, no cloud.
+> **Local semantic search for structured data.** Define any schema, add records, search in natural language. Fully local—no APIs, no cloud.
 
-Current state: **M0–M3** of [`specs/mvp-foundation-m0-m3.md`](specs/mvp-foundation-m0-m3.md) —
-schema definition, collection creation (flags and wizard), rendering, embedding, and
-`record add`. Search (M5) and the management commands (M6–M9) are not built yet.
+`semantic-db` is a CLI tool that brings semantic search to your own data. Define a collection with typed fields, add records, and query them using plain English. Built on Postgres + pgvector (local storage) and Ollama (local embeddings).
+
+**Status:** MVP foundation in progress. Milestones M0–M3 complete (schema, collections, embeddings, record add). Search (M5) and management tools (M6–M9) coming next. [Roadmap →](specs/)
+
+**Quick links:**  
+[Getting Started](#getting-started) • [Why semantic-db?](#why-semantic-db) • [Configuration](#environment) • [Architecture](#architecture) • [Development](#development)
+
+## Why semantic-db?
+
+Existing semantic search tools are cloud-based or tightly coupled to a specific data source. `semantic-db` is:
+
+- **Schema-driven:** You define the structure; the tool adapts to it
+- **Fully local:** All data stays on your machine. No APIs, no rate limits, no vendor lock-in
+- **Typed fields:** Strings, enums, dates, floats—with units and rendering rules
+- **Simple:** A CLI and a schema. That's it
+
+**Use cases:**
+- Search your own documents / articles / records by meaning, not keywords
+- Build semantic indexes for product catalogs, knowledge bases, research notes
+- Experiment with embeddings locally before deploying
+
+---
 
 ## Prerequisites
 
@@ -21,20 +38,34 @@ ollama pull bge-m3      # 1024-dimensional, multilingual
 `bge-m3` is not optional: the `embeddings.vec` column is `halfvec(1024)`, and a different model
 means a different dimension. Adding a record fails with a message naming the mismatch.
 
-## Quickstart
+## Getting Started
+
+### 1. Set up
 
 ```bash
 uv sync
-make up          # Postgres on localhost:5432
-make migrate     # alembic upgrade head
+make up          # Start Postgres on localhost:5432
+make migrate     # Run database migrations
+```
 
+### 2. Create a collection
+
+Define a schema with typed, embeddable fields:
+
+```bash
 uv run semantic-db collection create products \
     --field "title:string:embed,required" \
     --field "description:text:embed" \
     --field "category:enum(pumps|motors|valves|sensors):embed" \
     --field "year:int:embed" \
     --field "price:float:embed:unit=PLN"
+```
 
+Prefer interactive? Run with no `--field` flags for a guided wizard.
+
+### 3. Add records
+
+```bash
 uv run semantic-db record add products \
     --set "title=Hydraulic pump HP-400" \
     --set "category=pumps" \
@@ -43,23 +74,25 @@ uv run semantic-db record add products \
     --set "description=Cast-iron housing, rated 400 l/min, low-noise operation at 62 dB."
 ```
 
-Run `semantic-db collection create products` with no `--field` for the interactive wizard. Both
-paths build the same schema and go through the same use case.
+Records are embedded and searchable immediately upon save.
 
-### Field spec grammar
+## Field Spec
+
+Schemas use a compact grammar:
 
 ```
 name:type[:flags][:key=value]
 ```
 
-Types: `string`, `text`, `enum(a|b|c)`, `int`, `float`, `bool`, `date`, `array<string>`.
-Flags: `embed`, `required` (comma-separated or as separate segments).
-Options: `unit=…` (int and float only, used when rendering).
+**Types:** `string`, `text`, `enum(a|b|c)`, `int`, `float`, `bool`, `date`, `array<string>`  
+**Flags:** `embed`, `required` (comma-separated or separate)  
+**Options:** `unit=…` (int/float only; affects rendering)
 
-## How a record becomes searchable
+Example: `price:float:embed:unit=PLN` → embeds, renders as "Price: 4200 PLN"
 
-Each record renders into **one labelled card** — no chunking — and that exact string is what gets
-embedded and stored:
+## How Records Are Indexed
+
+Each record renders into one formatted card and embedded as-is:
 
 ```
 Title: Hydraulic pump HP-400
@@ -69,13 +102,11 @@ Year: 2019
 Price: 4200 PLN
 ```
 
-Fields render in declaration order; `embed: false` fields and absent optional values are omitted.
-Embedding happens on save, so **added means searchable** — a record with no vector is never a
-reachable state.
+Fields marked `embed: false` are excluded; optional fields omit missing values. Embedding happens on save—**added means searchable**, never a partial state.
 
-## Configuration
+## Environment
 
-Every setting has a default; override via `.env` or the environment (see `.env.example`):
+Configure via `.env` or environment variables (see `.env.example`):
 
 | Variable | Default |
 |---|---|
@@ -87,42 +118,62 @@ Every setting has a default; override via `.env` or the environment (see `.env.e
 ## Development
 
 ```bash
-make check              # ruff, ruff format --check, mypy --strict, lint-imports, unit tests
-make test-integration   # testcontainers Postgres + real Ollama, then alembic check
+make check              # type check, format, lint, unit tests
+make test-integration   # integration tests (real Postgres + Ollama)
 ```
 
-CI is deferred: there is no `.github/workflows/ci.yml` yet, but the `.importlinter` contracts and
-all five gates run locally through `make check`, so the layering is enforced by a command rather
-than by a diagram. Adding the workflow later is a transcription of the Makefile targets.
+All quality gates run locally; CI workflows pending. Code is structured by strict layering contracts enforced via `import-linter`.
 
-## Design notes worth knowing
+## Architecture
 
-**Payloads are JSONB.** A table per collection with real typed columns would be faster, but it
-requires generating and migrating DDL per user schema, and Alembic plus user-defined DDL do not
-coexist peacefully. JSONB is what vector databases do for metadata and it survives arbitrary
-schemas. `infrastructure/mappers.py` is the only place that knows JSONB has no date type.
+### Key Design Decisions
 
-**`rendered` is stored, not recomputed.** It is the exact string that produced the vector.
-Recomputing it after a template change would silently drift from what the index contains.
+**JSONB payloads, not per-collection DDL.** Avoids complex migration logic and supports arbitrary schemas. Trade-off: slower than native columns, but simpler.
 
-**CQRS-lite layering.** Write operations carry rules — validation, rendering, re-embedding — and
-stay as use cases. Read operations apply no rules and will go through a single `queries.py` façade
-from M6, rather than eight five-line pass-through classes.
+**Rendered text is stored.** The exact string that produced the vector is persisted. Prevents silent drift if a template changes after embeddings are created.
 
-**Three ports, no fourth.** `EmbeddingProvider`, `CollectionRepository`, `RecordRepository`. A port
-earns its place with a second implementation or a test that needs the seam; a `Renderer` interface
-would not, because rendering is a pure function. Methods are added as their milestone lands, so
-nothing in `ports.py` is a stub.
+**CQRS-lite.** Write operations (add, update, delete) carry business rules and live as use cases. Reads are rule-free and route through a single `queries.py` façade (coming in M6).
 
-## Layout
+**Minimal ports.** Three boundaries: `EmbeddingProvider`, `CollectionRepository`, `RecordRepository`. Each earns its place with a second implementation or a test seam.
+
+### Project Structure
 
 ```
 src/semantic_db/
-├── domain/           # entities, rendering, validation — no frameworks
-├── application/      # ports + use cases — no frameworks
-├── infrastructure/   # SQLAlchemy, Alembic, Ollama
-├── cli/              # Typer commands, questionary wizard
-└── container.py      # composition root — the only place that wires
+├── domain/           # Entities, rendering, validation
+├── application/      # Ports, use cases
+├── infrastructure/   # SQLAlchemy, Alembic, Ollama clients
+├── cli/              # Typer CLI, prompts, wizards
+└── container.py      # Composition root
 ```
 
-Dependencies point inward only, enforced by four `import-linter` contracts.
+Dependencies flow inward. Enforced by `import-linter` contracts.
+
+## Roadmap
+
+| Milestone | Status | Scope |
+|-----------|--------|-------|
+| **M0–M3** | ✅ Complete | Schema definition, collection creation, embedding, record add |
+| **M4** | 📋 Planned | Richer record operations (update, delete) |
+| **M5** | 📋 Planned | Semantic search API |
+| **M6–M9** | 📋 Planned | Management tools, import/export, schema evolution |
+
+Full specs: [`specs/`](specs/)
+
+---
+
+## Learn More
+
+- **[Specs](specs/)** — Detailed design docs for each milestone
+- **[PRD](PRD.md)** — Product requirements and vision
+- **[Architecture](README.md#architecture)** — Design decisions and trade-offs
+
+## Contributing
+
+Contributions welcome. Current focus: M4 (record operations) and M5 (search). See [`specs/`](specs/) for planned work.
+
+Start with:
+```bash
+make check              # Run all checks locally
+make test-integration   # Integration tests
+```
