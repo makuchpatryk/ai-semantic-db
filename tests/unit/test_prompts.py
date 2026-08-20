@@ -48,7 +48,7 @@ PRODUCTS_SCRIPT: list[object] = [
     "n",  # required
     "year",
     "int",
-    "",   # unit
+    "",  # unit
     "y",  # embed
     "n",  # required
     "price",
@@ -56,7 +56,7 @@ PRODUCTS_SCRIPT: list[object] = [
     "PLN",  # unit
     "y",  # embed
     "n",  # required
-    "",    # empty field name to end
+    "",  # empty field name to end
 ]
 
 
