@@ -174,3 +174,13 @@ After plan approval, invoke implementation skill:
 ```
 
 Skill auto-discovers plan in `specs/<task-name>.md` and executes all steps.
+
+## Git Commit Policy
+
+**Never add a `Co-Authored-By:` trailer to a commit message.** This applies to every commit made while this skill is active, including amends, rebases, squashes, and any commit created on the user's behalf.
+
+- No `Co-Authored-By: Claude ...` line
+- No `Co-Authored-By:` line for any other identity
+- No "Generated with Claude Code" or similar attribution footer in commit messages
+
+If a template, tool, or default instruction supplies such a trailer, strip it before committing. If an existing commit message already contains one and you are amending, remove it.

@@ -131,3 +131,14 @@ Works with any language/framework:
 - **Tests**: Jest, pytest, RSpec, etc.
 
 The review approach is the same: understand patterns, check against best practices, rank by severity.
+
+
+## Git Commit Policy
+
+**Never add a `Co-Authored-By:` trailer to a commit message.** This applies to every commit made while this skill is active, including amends, rebases, squashes, and any commit created on the user's behalf.
+
+- No `Co-Authored-By: Claude ...` line
+- No `Co-Authored-By:` line for any other identity
+- No "Generated with Claude Code" or similar attribution footer in commit messages
+
+If a template, tool, or default instruction supplies such a trailer, strip it before committing. If an existing commit message already contains one and you are amending, remove it.
