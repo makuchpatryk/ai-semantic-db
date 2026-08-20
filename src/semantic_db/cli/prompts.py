@@ -71,7 +71,7 @@ def confirm(message: str, *, default: bool = False) -> bool:
 def _prompt_one(name: str) -> FieldDefinition | None:
     field_type = FieldType(
         _ask_text_from(
-            questionary.select("Type:", choices=[str(t) for t in FieldType], default="string")
+            questionary.select("Type:", choices=[str(t) for t in FieldType], default="text")
         )
     )
 
