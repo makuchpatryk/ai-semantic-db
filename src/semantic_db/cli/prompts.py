@@ -4,6 +4,7 @@ from typing import cast
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 
 from semantic_db.cli.runner import console, error_console
 from semantic_db.domain.collection import CollectionSchema, FieldDefinition
@@ -67,7 +68,7 @@ def prompt_record_values(
 
 def confirm(message: str, *, default: bool = False) -> bool:
     """Prompt yes/no with default."""
-    session = PromptSession()
+    session: PromptSession[str] = PromptSession()
     default_str = "Y/n" if default else "y/N"
     answer = session.prompt(f"{message} [{default_str}]: ").strip().lower()
     if not answer:
@@ -76,7 +77,7 @@ def confirm(message: str, *, default: bool = False) -> bool:
 
 
 def _prompt_one(name: str) -> FieldDefinition | None:
-    session = PromptSession()
+    session: PromptSession[str] = PromptSession()
     field_types = [str(t) for t in FieldType]
     completer = WordCompleter(field_types, ignore_case=True)
 
@@ -116,7 +117,7 @@ def _prompt_one(name: str) -> FieldDefinition | None:
 
 def _ask_text(message: str) -> str:
     """Prompt for text."""
-    session = PromptSession()
+    session: PromptSession[str] = PromptSession()
     return session.prompt(f"{message}: ").strip()
 
 
@@ -162,14 +163,14 @@ def _ask_text_field(label: str, prev: PayloadValue | None = None) -> str | None:
     kb = KeyBindings()
 
     @kb.add("enter")
-    def _(event):
+    def _submit(event: KeyPressEvent) -> None:
         event.current_buffer.validate_and_handle()
 
     @kb.add("escape", "enter")
-    def _(event):
+    def _newline(event: KeyPressEvent) -> None:
         event.current_buffer.insert_text("\n")
 
-    session = PromptSession(key_bindings=kb)
+    session: PromptSession[str] = PromptSession(key_bindings=kb)
     console.print(f"[cyan]{label}[/]")
     result = session.prompt("> ", default=default_text, multiline=True)
     return result.strip() if result else None
@@ -184,11 +185,9 @@ def _ask_enum(label: str, field: FieldDefinition, prev: PayloadValue | None = No
 
     completer = WordCompleter(choices, ignore_case=True)
     default = str(prev) if prev and str(prev) in enum_values else choices[0]
-    session = PromptSession()
+    session: PromptSession[str] = PromptSession()
     choices_str = "/".join(choices)
-    selected = (
-        session.prompt(f"{label} [{choices_str}]: ", completer=completer).strip() or default
-    )
+    selected = session.prompt(f"{label} [{choices_str}]: ", completer=completer).strip() or default
 
     if selected == "(skip)":
         return None
@@ -200,7 +199,7 @@ def _ask_int_field(
 ) -> int | None:
     """Prompt for an int value."""
     default = str(int(prev)) if isinstance(prev, (int, float)) else ""
-    session = PromptSession()
+    session: PromptSession[str] = PromptSession()
     raw = session.prompt(f"{label}: ", default=default).strip()
     if not raw:
         return None
@@ -212,7 +211,7 @@ def _ask_float_field(
 ) -> float | None:
     """Prompt for a float value."""
     default = str(float(prev)) if isinstance(prev, (int, float)) else ""
-    session = PromptSession()
+    session: PromptSession[str] = PromptSession()
     raw = session.prompt(f"{label}: ", default=default).strip()
     if not raw:
         return None
@@ -223,7 +222,7 @@ def _ask_bool_field(
     label: str, field: FieldDefinition, prev: PayloadValue | None = None
 ) -> bool | None:
     """Prompt for a bool value."""
-    session = PromptSession()
+    session: PromptSession[str] = PromptSession()
     if field.required:
         default = "y" if prev else "n"
         ans = session.prompt(f"{label} [y/n]: ", default=default).strip().lower()
@@ -232,9 +231,10 @@ def _ask_bool_field(
     choices = ["yes", "no", "(skip)"]
     default = "yes" if prev else "(skip)"
     completer = WordCompleter(choices, ignore_case=True)
-    selected = session.prompt(
-        f"{label} [yes/no/(skip)]: ", completer=completer, default=default
-    ).strip() or default
+    selected = (
+        session.prompt(f"{label} [yes/no/(skip)]: ", completer=completer, default=default).strip()
+        or default
+    )
 
     if selected == "(skip)":
         return None
@@ -246,7 +246,7 @@ def _ask_date_field(
 ) -> date | None:
     """Prompt for a date value (YYYY-MM-DD)."""
     default = prev.isoformat() if isinstance(prev, date) else ""
-    session = PromptSession()
+    session: PromptSession[str] = PromptSession()
     raw = session.prompt(f"{label} (YYYY-MM-DD): ", default=default).strip()
     if not raw:
         return None
@@ -256,7 +256,7 @@ def _ask_date_field(
 def _ask_array_field(label: str, prev: PayloadValue | None = None) -> list[str] | None:
     """Prompt for an array<string> value (comma-separated)."""
     default = ", ".join(prev) if isinstance(prev, list) else ""
-    session = PromptSession()
+    session: PromptSession[str] = PromptSession()
     raw = session.prompt(f"{label} (comma-separated): ", default=default).strip()
     if not raw:
         return None
