@@ -4,7 +4,7 @@
 
 `semantic-db` is a CLI tool that brings semantic search to your own data. Define a collection with typed fields, add records, and query them using plain English. Built on Postgres + pgvector (local storage) and Ollama (local embeddings).
 
-**Status:** MVP foundation in progress. Milestones M0–M3 complete (schema, collections, embeddings, record add). Search (M5) and management tools (M6–M9) coming next. [Roadmap →](specs/)
+**Status:** MVP in progress. Milestones M0–M5 complete — define a collection, add records (flags or wizard), search them. Management commands (`list`, `show`, `edit`, `delete`) are M6–M9 and not built yet. [Roadmap →](PRD.md#12-milestones)
 
 **Quick links:**  
 [Getting Started](#getting-started) • [Why semantic-db?](#why-semantic-db) • [Configuration](#environment) • [Architecture](#architecture) • [Development](#development)
@@ -15,7 +15,7 @@ Existing semantic search tools are cloud-based or tightly coupled to a specific 
 
 - **Schema-driven:** You define the structure; the tool adapts to it
 - **Fully local:** All data stays on your machine. No APIs, no rate limits, no vendor lock-in
-- **Typed fields:** Strings, enums, dates, floats—with units and rendering rules
+- **Typed fields:** text, enums, ints, floats, bools, dates, string arrays—with units and rendering rules
 - **Simple:** A CLI and a schema. That's it
 
 **Use cases:**
@@ -54,7 +54,7 @@ Define a schema with typed, embeddable fields:
 
 ```bash
 uv run semantic-db collection create products \
-    --field "title:string:embed,required" \
+    --field "title:text:embed,required" \
     --field "description:text:embed" \
     --field "category:enum(pumps|motors|valves|sensors):embed" \
     --field "year:int:embed" \
@@ -74,7 +74,18 @@ uv run semantic-db record add products \
     --set "description=Cast-iron housing, rated 400 l/min, low-noise operation at 62 dB."
 ```
 
-Records are embedded and searchable immediately upon save.
+Records are embedded and searchable immediately upon save. With no `--set` flags you get the schema-driven wizard, which keeps asking `Add another?` until you say no.
+
+### 4. Search
+
+```bash
+uv run semantic-db search products "quiet pump for industrial use"
+uv run semantic-db search products "quiet pump" --k 5 --explain
+```
+
+Results are a Rich table of rank, cosine distance, and the first embeddable field. `--explain` adds the full rendered text of every hit.
+
+Search refuses to run if the collection was embedded with a model other than the configured one — cross-model distances look plausible and mean nothing.
 
 ## Field Spec
 
@@ -84,7 +95,7 @@ Schemas use a compact grammar:
 name:type[:flags][:key=value]
 ```
 
-**Types:** `string`, `text`, `enum(a|b|c)`, `int`, `float`, `bool`, `date`, `array<string>`  
+**Types:** `text`, `enum(a|b|c)`, `int`, `float`, `bool`, `date`, `array<string>`  
 **Flags:** `embed`, `required` (comma-separated or separate)  
 **Options:** `unit=…` (int/float only; affects rendering)
 
@@ -122,7 +133,9 @@ make check              # type check, format, lint, unit tests
 make test-integration   # integration tests (real Postgres + Ollama)
 ```
 
-All quality gates run locally; CI workflows pending. Code is structured by strict layering contracts enforced via `import-linter`.
+The same five gates run in CI (`.github/workflows/ci.yml`) on every push to `main`, every PR, and on demand from the Actions tab: `lint`, `types`, `architecture`, `unit`, and `integration`. Only `integration` needs services — Postgres as a job service container, Ollama installed on the runner with `bge-m3` cached.
+
+Locally, integration tests start their own Postgres via testcontainers unless `SEMANTIC_DB_DATABASE_URL` already points at one. Tests that need a live Ollama skip themselves when none is running.
 
 ## Architecture
 
@@ -132,7 +145,7 @@ All quality gates run locally; CI workflows pending. Code is structured by stric
 
 **Rendered text is stored.** The exact string that produced the vector is persisted. Prevents silent drift if a template changes after embeddings are created.
 
-**CQRS-lite.** Write operations (add, update, delete) carry business rules and live as use cases. Reads are rule-free and route through a single `queries.py` façade (coming in M6).
+**CQRS-lite.** Write operations (add, update, delete) carry business rules and live as use cases. Reads are rule-free and route through a single `queries.py` façade — currently just `get_collection`; the rest arrives with M6.
 
 **Minimal ports.** Three boundaries: `EmbeddingProvider`, `CollectionRepository`, `RecordRepository`. Each earns its place with a second implementation or a test seam.
 
@@ -153,12 +166,13 @@ Dependencies flow inward. Enforced by `import-linter` contracts.
 
 | Milestone | Status | Scope |
 |-----------|--------|-------|
-| **M0–M3** | ✅ Complete | Schema definition, collection creation, embedding, record add |
-| **M4** | 📋 Planned | Richer record operations (update, delete) |
-| **M5** | 📋 Planned | Semantic search API |
-| **M6–M9** | 📋 Planned | Management tools, import/export, schema evolution |
+| **M0–M3** | ✅ Complete | Schema definition, collection creation, embedding, `record add` (flags) |
+| **M4** | ✅ Complete | Interactive `record add` — schema-driven prompts, add-another loop |
+| **M5** | ✅ Complete | Semantic search: cosine top-k, Rich table, `--explain` |
+| **M6** | 📋 Planned | `collection list/show`, `record list/show` |
+| **M7–M9** | 📋 Planned | Deletes, `record edit` (re-embed), additive `collection edit` |
 
-Full specs: [`specs/`](specs/)
+Full specs: [`specs/`](specs/) · milestone table: [PRD §12](PRD.md#12-milestones)
 
 ---
 
@@ -170,7 +184,7 @@ Full specs: [`specs/`](specs/)
 
 ## Contributing
 
-Contributions welcome. Current focus: M4 (record operations) and M5 (search). See [`specs/`](specs/) for planned work.
+Contributions welcome. Current focus: M6 (read commands). See [`specs/`](specs/) for planned work.
 
 Start with:
 ```bash

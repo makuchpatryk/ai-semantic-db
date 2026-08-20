@@ -1,10 +1,13 @@
 # semantic-db — PRD (MVP)
 
-**Version:** 1.0
-**Status:** Ready to build
+**Version:** 1.1
+**Status:** In progress — M0–M5 shipped, M6–M9 open
 **Author:** Patryk Makuch
+**Last reviewed against the code:** 2026-08-20
 
 > Earlier drafts (0.1–0.6) scoped filters, hybrid retrieval, an eval harness, and LlamaIndex. All of that moved to §12 Roadmap. This document describes an MVP of **three commands**.
+
+> **Where the build stands:** the three core commands (`collection create`, `record add`, `search`) all work, in both the flag and the interactive path. The management commands of §7 (`list`, `show`, `edit`, `delete`) are not built yet. Per-milestone status in §12, deviations from this spec in §12.1.
 
 ---
 
@@ -43,8 +46,8 @@ Not in the MVP: metadata filters, lexical/hybrid search, reranking, eval harness
 
 | Type | Notes |
 |---|---|
-| `string` | short text |
-| `text` | long-form, `$EDITOR` on input |
+| ~~`string`~~ | **dropped as built** — collapsed into `text`; one text type, one prompt, one renderer |
+| `text` | free text; multiline in the terminal (`$EDITOR` dropped as built — see §12.1) |
 | `enum` | declared value list |
 | `int` | |
 | `float` | optional `unit` label for rendering |
@@ -63,8 +66,7 @@ $ semantic-db collection create products
 
 ── Field 1 ──────────────────────────────
 Field name:  title
-Type:        › string
-               text
+Type:        › text
                  enum
                  int
                  float
@@ -98,7 +100,7 @@ A flag equivalent exists for every prompt, because tests and fixtures can't driv
 
 ```bash
 semantic-db collection create products \
-    --field "title:string:embed,required" \
+    --field "title:text:embed,required" \
     --field "description:text:embed" \
     --field "category:enum(pumps|motors|valves|sensors):embed" \
     --field "year:int:embed" \
@@ -133,11 +135,8 @@ Prompts are generated from the schema — type, enum values, and `required` all 
 $ semantic-db record add products
 
 title *          Hydraulic pump HP-400
-description      [opens $EDITOR]
-category         › pumps
-                   motors
-                   valves
-                   sensors
+description      [multiline; Alt+Enter for a newline]
+category         [pumps/motors/valves/sensors]  pumps
 year             2019
 price (PLN)      4200
 
@@ -155,9 +154,8 @@ Add another? [Y/n]
 
 | Type | Input handling |
 |---|---|
-| `string` | text input |
-| `text` | `$EDITOR` |
-| `enum` | select list from declared values |
+| `text` | multiline terminal input — Enter submits, Alt+Enter inserts a newline |
+| `enum` | prompt with tab-completion over the declared values; `(skip)` when optional |
 | `int` / `float` | numeric, rejected on parse failure |
 | `bool` | y/n |
 | `date` | ISO, validated |
@@ -193,7 +191,9 @@ Pipeline, in full:
 query → embed (Ollama) → cosine search over pgvector → top-k
 ```
 
-Output is a Rich table: rank, score, and the record's first embeddable field, with `--explain` adding the raw cosine distance and the full rendered text of each hit.
+Output is a Rich table: rank, cosine distance, and the record's first embeddable field, with `--explain` adding the full rendered text of each hit in a panel. As built the distance is always shown rather than a derived similarity score — one number, and it is the one the index actually ranks on.
+
+`search` refuses to run when the collection was embedded with a model other than the configured one, naming both (`EmbeddingModelMismatchError`). Comparing vectors across models silently returns plausible nonsense, which is the worst failure mode this tool has.
 
 That's the whole thing. No fusion, no reranking, no filters. It's a small enough surface that the retrieval quality is entirely a function of the rendering and the embedding model — which is the right place for attention in v1.
 
@@ -316,20 +316,24 @@ Dependencies point inward only. Nothing in `domain` imports SQLAlchemy, Typer, o
 ```
 src/semantic_db/
 ├── domain/
-│   ├── collection.py        # Collection, FieldDefinition, FieldType
-│   ├── record.py            # Record, ScoredRecord
+│   ├── collection.py        # Collection, CollectionSchema, FieldDefinition
+│   ├── field_types.py       # FieldType
+│   ├── record.py            # Record, ScoredRecord, Payload
+│   ├── validation.py        # coerce_value, payload validation against the schema
+│   ├── errors.py            # SemanticDbError and its subtypes
 │   └── rendering.py         # render(schema, payload) -> str   (pure)
 │
 ├── application/
 │   ├── ports.py             # three Protocols
 │   ├── queries.py           # read-only reads, no use case each (see 7.5)
-│   └── use_cases/
+│   ├── embedding.py         # embed_one helper, shared by add_record and search
+│   └── use_cases/           # built: create_collection, add_record, search_records
 │       ├── create_collection.py
-│       ├── edit_collection.py
-│       ├── delete_collection.py
+│       ├── edit_collection.py       # M9
+│       ├── delete_collection.py     # M7
 │       ├── add_record.py
-│       ├── edit_record.py
-│       ├── delete_record.py
+│       ├── edit_record.py           # M8
+│       ├── delete_record.py         # M7
 │       └── search_records.py
 │
 ├── infrastructure/
@@ -360,18 +364,21 @@ class EmbeddingProvider(Protocol):
 class CollectionRepository(Protocol):
     async def create(self, collection: Collection) -> Collection: ...
     async def get(self, name: str) -> Collection | None: ...
-    async def list(self) -> list[CollectionSummary]: ...
-    async def update(self, collection: Collection) -> Collection: ...
-    async def delete(self, name: str) -> None: ...
+    async def list(self) -> list[CollectionSummary]: ...          # M6
+    async def update(self, collection: Collection) -> Collection: ...   # M9
+    async def delete(self, name: str) -> None: ...                # M7
 
 class RecordRepository(Protocol):
     async def add(self, collection_id: int, record: Record, vec: list[float]) -> Record: ...
-    async def get(self, collection_id: int, record_id: int) -> Record | None: ...
-    async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]: ...
-    async def update(self, record: Record, vec: list[float]) -> Record: ...   # atomic re-embed
-    async def delete(self, collection_id: int, record_id: int) -> None: ...
     async def search(self, collection_id: int, vec: list[float], k: int) -> list[ScoredRecord]: ...
+    async def embedding_models(self, collection_id: int) -> frozenset[str]: ...   # added as built
+    async def get(self, collection_id: int, record_id: int) -> Record | None: ...       # M6
+    async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]: ...  # M6
+    async def update(self, record: Record, vec: list[float]) -> Record: ...   # M8, atomic re-embed
+    async def delete(self, collection_id: int, record_id: int) -> None: ...   # M7
 ```
+
+Methods land with the milestone that needs them, so the ports carry no stubs. `embedding_models` is the one addition to this list: `search` has to fail loudly when the corpus was embedded with a model other than the configured one, instead of returning quietly meaningless distances.
 
 **No fourth port without a second implementation or a test that needs the seam.** `EmbeddingProvider` earns its place — swapping Ollama models is a config change and the fake makes use-case tests DB-free. A `Renderer` interface would not; it's a pure function.
 
@@ -390,11 +397,15 @@ Enforced by an `import-linter` contract in CI from M0, so the layering is a prop
 
 ## 10. Stack
 
-Python 3.12 · `uv` · Postgres 17 + pgvector · SQLAlchemy 2.0 (async) + Alembic · Pydantic v2 · Typer + Rich + questionary · Ollama (`bge-m3`, 1024d, multilingual) · pytest + testcontainers · ruff + mypy strict · import-linter · Docker Compose
+Python 3.12 · `uv` · Postgres 17 + pgvector · SQLAlchemy 2.0 (async) + Alembic · Pydantic v2 · Typer + Rich + **prompt-toolkit** · Ollama (`bge-m3`, 1024d, multilingual) · pytest + testcontainers · ruff + mypy strict · import-linter · Docker Compose
+
+`questionary` was the original pick and was replaced by `prompt-toolkit` directly: the wizard needs multiline text with a custom Enter/Alt+Enter binding and prefilled defaults, which questionary wraps without exposing. Ollama runs on the host, not in Compose — Compose carries Postgres only.
 
 ---
 
 ## 11. CI
+
+> **Built.** `.github/workflows/ci.yml` runs all five jobs on push to `main`, on every PR, and on `workflow_dispatch` (the "Run workflow" button). It landed late — this was M0 scope — and its first act was to catch what had accumulated meanwhile: 13 `mypy --strict` errors in `cli/prompts.py` and two files failing `ruff format --check`, all left by the prompt-toolkit migration. Fixed; every gate is green.
 
 Five required checks on every PR. Four are fast and DB-free; only `integration` pays for a container.
 
@@ -412,7 +423,8 @@ Three decisions in there worth keeping:
 
 - **Split unit from integration by pytest marker.** Most failures are logic errors and surface in under a minute; only the last job waits on a database. This is only possible because the layering keeps the domain and use cases DB-free — the architecture pays for itself in CI time.
 - **`alembic check` in the integration job.** Catches SQLAlchemy models edited without a matching migration, which is the most common silent break in this stack and never shows up in tests until something else fails oddly.
-- **Postgres as a service container, not testcontainers.** Faster in CI, since the runner pulls one image and reuses it across the job. Testcontainers stays for local runs; both read `DATABASE_URL`, so the test code doesn't branch.
+- **Postgres as a service container, not testcontainers.** Faster in CI, since the runner pulls one image and reuses it across the job. Testcontainers stays for local runs; the `database_url` fixture uses `SEMANTIC_DB_DATABASE_URL` when it is set and starts a container when it is not, so the tests themselves never branch.
+- **Ollama installed on the runner, with the model cached.** `record add` embeds on save, so the end-to-end tests need a real embedder — stubbing it there would test the stub. `~/.ollama/models` is an `actions/cache` entry keyed on the model name, which keeps the ~1.2GB `bge-m3` pull to the first run. The Ollama-backed tests still skip themselves when nothing answers on the configured URL, so a checkout without Ollama runs the rest of the suite instead of failing.
 
 `import-linter` enforces four contracts: the inward-only layer order, no framework imports in `domain`, no framework imports in `application`, and no CLI reaching past use cases into repositories. Without this in CI, the layering is a diagram in a README rather than a property of the code.
 
@@ -422,20 +434,36 @@ Set all five as required status checks in branch protection, otherwise a red PR 
 
 ## 12. Milestones
 
-| # | Deliverable | Done when |
-|---|---|---|
-| M0 | Compose (Postgres + pgvector, Ollama), Alembic, settings, Typer skeleton, layer structure, `import-linter`, **CI workflow** | `semantic-db --help` works; all five CI jobs green on the first PR |
-| M1 | Schema model, validation, `collection create` (flags), persistence | `collection create products --field ...` writes a collection |
-| M2 | Interactive wizard over the same use case, with render preview | `collection create products` with no flags works end to end |
-| M3 | `OllamaEmbeddingProvider`, renderer, `record add` (flags), embed on save | A record is stored with its vector |
-| M4 | Interactive `record add` with schema-driven prompts and the add-another loop | 30+ records entered by hand without pain |
-| M5 | `search` with cosine top-k, Rich output, `--explain` | Query returns relevant records |
-| M6 | `collection list/show`, `record list/show` via `queries.py` | Corpus inspectable without `psql` |
-| M7 | `collection delete` (cascade + typed confirm), `record delete` | Destructive paths covered by integration tests |
-| M8 | `record edit` (re-render + re-embed atomically) | Payload, rendered text, and vector never diverge |
-| M9 | `collection edit` — additive and `embed`-toggle only, with full re-embed | Rejected changes fail with a clear reason |
+| # | Deliverable | Done when | Status |
+|---|---|---|---|
+| M0 | Compose (Postgres + pgvector, Ollama), Alembic, settings, Typer skeleton, layer structure, `import-linter`, **CI workflow** | `semantic-db --help` works; all five CI jobs green on the first PR | **done** — the workflow landed after M5 rather than first; Ollama runs on the host, not in Compose |
+| M1 | Schema model, validation, `collection create` (flags), persistence | `collection create products --field ...` writes a collection | **done** |
+| M2 | Interactive wizard over the same use case, with render preview | `collection create products` with no flags works end to end | **done** |
+| M3 | `OllamaEmbeddingProvider`, renderer, `record add` (flags), embed on save | A record is stored with its vector | **done** |
+| M4 | Interactive `record add` with schema-driven prompts and the add-another loop | 30+ records entered by hand without pain | **done** |
+| M5 | `search` with cosine top-k, Rich output, `--explain` | Query returns relevant records | **done** |
+| M6 | `collection list/show`, `record list/show` via `queries.py` | Corpus inspectable without `psql` | open — `Queries` exists with `get_collection` only |
+| M7 | `collection delete` (cascade + typed confirm), `record delete` | Destructive paths covered by integration tests | open |
+| M8 | `record edit` (re-render + re-embed atomically) | Payload, rendered text, and vector never diverge | open |
+| M9 | `collection edit` — additive and `embed`-toggle only, with full re-embed | Rejected changes fail with a clear reason | open |
 
-**Second-collection test before M5:** create a collection with a completely different shape (books: `author`, `published`, `genres`) and add a few records. If anything breaks, the schema abstraction is wrong, and it's much cheaper to find out here.
+**Second-collection test before M5:** create a collection with a completely different shape (books: `author`, `published`, `genres`) and add a few records. If anything breaks, the schema abstraction is wrong, and it's much cheaper to find out here. **Done** — `books` lives in `tests/schemas.py` alongside `products` and runs through the rendering, validation, and CLI tests. It exercised `date`, `bool`, and `array<string>`; the schema abstraction held.
+
+Current test surface: 93 unit tests, 3 skipped (domain, use cases against fakes, CLI flag paths) and 16 integration tests (repositories, Ollama, CLI end to end).
+
+### 12.1 Deviations from this spec, as built
+
+| Change | Where | Why |
+|---|---|---|
+| `string` type dropped; `text` is the only text type | §4.1 | Two types with one behaviour between them. `text` covers both, and one prompt path means one place for the multiline handling. |
+| `$EDITOR` dropped for `text` input | §5.1 | Text entry is terminal-only: Enter submits, Alt+Enter inserts a newline. Shelling out to an editor mid-wizard broke the add-another rhythm, and an unset or missing `$EDITOR` failed in a way that was hard to explain. |
+| `enum` is completion, not a select list | §5.1 | prompt-toolkit's completer over the declared values, with `(skip)` prepended when the field is optional. Typing is faster than arrowing once the value list is known. |
+| `questionary` → `prompt-toolkit` | §10 | The wizard needs custom key bindings and prefilled defaults; questionary hides both. |
+| Ollama out of Compose | §12 M0 | It runs on the host with the model already pulled; a second copy in a container duplicates a multi-GB model download. |
+| `search` shows distance, no separate score column | §6 | One ranking number, the one the index uses. |
+| `RecordRepository.embedding_models` added | §9.1 | `search` must reject a corpus embedded with a different model rather than return meaningless distances. |
+| CI workflow landed after M5, not in M0 | §11 | Slipped, then caught 15 accumulated lint and type failures the moment it ran. R6's point, demonstrated. |
+| `record add` requires a TTY for the interactive path | §5.1 | Without a TTY it fails naming `--set`, instead of hanging on a prompt nothing will answer. |
 
 ---
 
@@ -460,18 +488,19 @@ Ordered by what each one buys, not by effort.
 
 | # | Risk | Mitigation |
 |---|---|---|
-| R1 | Schema abstraction only works for the demo domain | Second-collection test before M5 |
-| R2 | Hand entry too tedious to reach a useful corpus | Add-another loop, prefilled defaults, flag path for scripted seeding; bulk ingest is first on the roadmap if it bites |
+| R1 | Schema abstraction only works for the demo domain | **Closed** — `books` passed the second-collection test (§12) |
+| R2 | Hand entry too tedious to reach a useful corpus | Add-another loop, prefilled defaults, flag path for scripted seeding; bulk ingest is first on the roadmap if it bites. `scripts/seed_products.sh` exists but **is written against a `--field name type --embed` syntax that was never built** — it needs rewriting to the `--field "name:type:flags"` grammar of §4.2 before it runs |
 | R3 | Embedding on save feels slow | ~400ms is tolerable; if not, queue and embed on a background pass |
 | R4 | Clean Architecture becomes ceremony at this size | One use case per command; no port without a second implementation or a test that needs the seam |
 | R5a | `collection edit` re-embeds the whole corpus on an `embed` toggle | Progress bar, cost stated before starting, `--yes` for scripts; corpus is small by design |
 | R5b | Accidental `collection delete` | Typed-name confirmation, not y/n; `--yes` only for scripted use |
 | R5 | Scope creep back toward v0.6 | §3 and §13 are binding; nothing from the roadmap enters v1 |
-| R6 | CI green but layering already broken by the time contracts are added | `import-linter` and the workflow land in M0, before there is any code to grandfather in |
+| R6 | CI green but layering already broken by the time contracts are added | `import-linter` landed in M0 with four contracts and never broke. The workflow itself slipped to after M5, and the drift it let through was in lint and types rather than layering — the contracts held because they were written first. |
 
 ---
 
 ## 15. Open questions
 
-1. **Demo domain** — which collection ships as the example?
-2. **Record language** — Polish, English, or mixed? `bge-m3` handles all three.
+1. ~~**Demo domain** — which collection ships as the example?~~ **Answered: industrial `products`** (pumps, motors, valves, sensors), used in the README, the seed script, and the tests, with `books` as the second shape.
+2. ~~**Record language** — Polish, English, or mixed?~~ **Answered: English**, throughout the fixtures and the seed corpus. `bge-m3` still allows a Polish corpus later without a schema change.
+3. **Branch protection** — the workflow exists; the five jobs still have to be set as required status checks in the repository settings, or a red PR stays mergeable (§11).
