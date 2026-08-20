@@ -1,7 +1,9 @@
 from datetime import date
-from typing import Any, cast
+from typing import cast
 
-import questionary
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.key_binding import KeyBindings
 
 from semantic_db.cli.runner import console, error_console
 from semantic_db.domain.collection import CollectionSchema, FieldDefinition
@@ -64,34 +66,39 @@ def prompt_record_values(
 
 
 def confirm(message: str, *, default: bool = False) -> bool:
-    return bool(_ask(questionary.confirm(message, default=default)))
+    """Prompt yes/no with default."""
+    session = PromptSession()
+    default_str = "Y/n" if default else "y/N"
+    answer = session.prompt(f"{message} [{default_str}]: ").strip().lower()
+    if not answer:
+        return default
+    return answer in ("y", "yes")
 
 
 def _prompt_one(name: str) -> FieldDefinition | None:
+    session = PromptSession()
+    field_types = [str(t) for t in FieldType]
+    completer = WordCompleter(field_types, ignore_case=True)
+
     field_type = FieldType(
-        _ask_text_from(
-            questionary.select("Type:", choices=[str(t) for t in FieldType], default="text")
-        )
+        session.prompt(f"Type [{field_types[0]}]: ", completer=completer).strip() or "text"
     )
 
     enum_values: tuple[str, ...] | None = None
     if field_type is FieldType.ENUM:
-        raw = _ask_text("Enum values (comma-separated):")
+        raw = session.prompt("Enum values (comma-separated): ").strip()
         enum_values = tuple(value.strip() for value in raw.split(",") if value.strip())
 
     unit: str | None = None
     if field_type in UNIT_TYPES:
-        unit = _ask_text("Unit (optional, e.g. PLN):") or None
+        unit = session.prompt("Unit (optional, e.g. PLN): ").strip() or None
 
-    options = _ask_choices(
-        questionary.checkbox(
-            "Options:",
-            choices=[
-                questionary.Choice(EMBED_LABEL, checked=True),
-                questionary.Choice(REQUIRED_LABEL),
-            ],
-        )
-    )
+    console.print("Options: (press Space to toggle, Enter to confirm)")
+    options = []
+    for label in [EMBED_LABEL, REQUIRED_LABEL]:
+        ans = session.prompt(f"  {label}? [Y/n]: ").strip().lower()
+        if ans != "n":
+            options.append(label)
 
     try:
         return FieldDefinition(
@@ -103,28 +110,14 @@ def _prompt_one(name: str) -> FieldDefinition | None:
             unit=unit,
         )
     except SchemaError as exc:
-        # Re-prompting the one bad field beats discarding the whole wizard.
         error_console.print(f"[bold red]Error:[/] {exc}")
         return None
 
 
-def _ask(question: Any) -> Any:
-    answer = question.ask()
-    if answer is None:
-        raise PromptAborted("cancelled")
-    return answer
-
-
 def _ask_text(message: str) -> str:
-    return _ask_text_from(questionary.text(message))
-
-
-def _ask_text_from(question: Any) -> str:
-    return str(_ask(question)).strip()
-
-
-def _ask_choices(question: Any) -> list[str]:
-    return [str(choice) for choice in _ask(question)]
+    """Prompt for text."""
+    session = PromptSession()
+    return session.prompt(f"{message}: ").strip()
 
 
 def _prompt_field(
@@ -135,7 +128,7 @@ def _prompt_field(
     """Prompt for a single field value, coercing and re-prompting on error."""
     if is_first:
         console.print(
-            "[dim]Text fields: Enter for newline, Alt+Enter to finish."
+            "[dim]Text fields: Enter to finish, Alt+Enter for newline."
             " Required fields marked with *[/]\n"
         )
 
@@ -163,10 +156,23 @@ def _prompt_field(
 
 
 def _ask_text_field(label: str, prev: PayloadValue | None = None) -> str | None:
-    """Prompt for multiline text in terminal."""
+    """Prompt for multiline text using prompt_toolkit."""
     default_text = str(prev) if prev else ""
-    raw = _ask_text_from(questionary.text(label, multiline=True, default=default_text))
-    return raw if raw else None
+
+    kb = KeyBindings()
+
+    @kb.add("enter")
+    def _(event):
+        event.current_buffer.validate_and_handle()
+
+    @kb.add("escape", "enter")
+    def _(event):
+        event.current_buffer.insert_text("\n")
+
+    session = PromptSession(key_bindings=kb)
+    console.print(f"[cyan]{label}[/]")
+    result = session.prompt("> ", default=default_text, multiline=True)
+    return result.strip() if result else None
 
 
 def _ask_enum(label: str, field: FieldDefinition, prev: PayloadValue | None = None) -> str | None:
@@ -176,8 +182,13 @@ def _ask_enum(label: str, field: FieldDefinition, prev: PayloadValue | None = No
     if not field.required:
         choices = ["(skip)"] + choices
 
-    default = str(prev) if prev and str(prev) in enum_values else None
-    selected = _ask_text_from(questionary.select(label, choices=choices, default=default))
+    completer = WordCompleter(choices, ignore_case=True)
+    default = str(prev) if prev and str(prev) in enum_values else choices[0]
+    session = PromptSession()
+    choices_str = "/".join(choices)
+    selected = (
+        session.prompt(f"{label} [{choices_str}]: ", completer=completer).strip() or default
+    )
 
     if selected == "(skip)":
         return None
@@ -188,8 +199,9 @@ def _ask_int_field(
     label: str, field: FieldDefinition, prev: PayloadValue | None = None
 ) -> int | None:
     """Prompt for an int value."""
-    default = str(int(prev)) if isinstance(prev, (int, float)) else None
-    raw = _ask_text_from(questionary.text(label, default=default or ""))
+    default = str(int(prev)) if isinstance(prev, (int, float)) else ""
+    session = PromptSession()
+    raw = session.prompt(f"{label}: ", default=default).strip()
     if not raw:
         return None
     return cast(int, coerce_value(field, raw))
@@ -199,8 +211,9 @@ def _ask_float_field(
     label: str, field: FieldDefinition, prev: PayloadValue | None = None
 ) -> float | None:
     """Prompt for a float value."""
-    default = str(float(prev)) if isinstance(prev, (int, float)) else None
-    raw = _ask_text_from(questionary.text(label, default=default or ""))
+    default = str(float(prev)) if isinstance(prev, (int, float)) else ""
+    session = PromptSession()
+    raw = session.prompt(f"{label}: ", default=default).strip()
     if not raw:
         return None
     return cast(float, coerce_value(field, raw))
@@ -210,15 +223,18 @@ def _ask_bool_field(
     label: str, field: FieldDefinition, prev: PayloadValue | None = None
 ) -> bool | None:
     """Prompt for a bool value."""
+    session = PromptSession()
     if field.required:
-        return bool(_ask(questionary.confirm(label, default=bool(prev) if prev else False)))
+        default = "y" if prev else "n"
+        ans = session.prompt(f"{label} [y/n]: ", default=default).strip().lower()
+        return ans in ("y", "yes")
 
-    choices = ["yes", "no"]
-    if not field.required:
-        choices = ["(skip)"] + choices
-
-    default = "yes" if prev else None
-    selected = _ask_text_from(questionary.select(label, choices=choices, default=default))
+    choices = ["yes", "no", "(skip)"]
+    default = "yes" if prev else "(skip)"
+    completer = WordCompleter(choices, ignore_case=True)
+    selected = session.prompt(
+        f"{label} [yes/no/(skip)]: ", completer=completer, default=default
+    ).strip() or default
 
     if selected == "(skip)":
         return None
@@ -228,18 +244,20 @@ def _ask_bool_field(
 def _ask_date_field(
     label: str, field: FieldDefinition, prev: PayloadValue | None = None
 ) -> date | None:
-    """Prompt for a date value."""
-    default = prev.isoformat() if isinstance(prev, date) else None
-    raw = _ask_text_from(questionary.text(label, default=default or ""))
+    """Prompt for a date value (YYYY-MM-DD)."""
+    default = prev.isoformat() if isinstance(prev, date) else ""
+    session = PromptSession()
+    raw = session.prompt(f"{label} (YYYY-MM-DD): ", default=default).strip()
     if not raw:
         return None
     return cast(date, coerce_value(field, raw))
 
 
 def _ask_array_field(label: str, prev: PayloadValue | None = None) -> list[str] | None:
-    """Prompt for an array<string> value."""
-    default = ", ".join(prev) if isinstance(prev, list) else None
-    raw = _ask_text_from(questionary.text(label, default=default or ""))
+    """Prompt for an array<string> value (comma-separated)."""
+    default = ", ".join(prev) if isinstance(prev, list) else ""
+    session = PromptSession()
+    raw = session.prompt(f"{label} (comma-separated): ", default=default).strip()
     if not raw:
         return None
     return cast(
