@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from time import perf_counter
 
@@ -14,6 +14,12 @@ INSTRUMENTATION_SCOPE = "semantic_db"
 # expands the `ms` unit, and appends `_total` to counters.
 DURATION_INSTRUMENT = "semantic_db.span.duration"
 ERRORS_INSTRUMENT = "semantic_db.errors"
+
+# Every root span is named `cli.command`, so `span.name` alone would collapse search, add
+# and create into one series. `command` is promoted to a metric dimension to split them;
+# it is the only one, because it is the only attribute with a closed set of values —
+# `collection` or `query` as a label would be unbounded cardinality in Prometheus.
+METRIC_DIMENSIONS = ("command",)
 
 
 class OtelSpan:
@@ -41,6 +47,7 @@ class OtelTelemetry:
     @contextmanager
     def span(self, name: str, **attributes: AttrValue) -> Iterator[SpanScope]:
         started = perf_counter()
+        labels = _metric_labels(name, attributes)
         with self._tracer.start_as_current_span(name, attributes=dict(qualify(attributes))) as span:
             try:
                 yield OtelSpan(span)
@@ -49,7 +56,19 @@ class OtelTelemetry:
                 # codes and Rich messages are unchanged by instrumentation.
                 span.record_exception(exc)
                 span.set_status(Status(StatusCode.ERROR, str(exc)))
-                self._errors.add(1, {"span.name": name, "error.type": type(exc).__name__})
+                self._errors.add(1, {**labels, "error.type": type(exc).__name__})
                 raise
             finally:
-                self._duration.record((perf_counter() - started) * 1000, {"span.name": name})
+                self._duration.record((perf_counter() - started) * 1000, labels)
+
+
+def _metric_labels(name: str, attributes: Mapping[str, AttrValue]) -> dict[str, AttrValue]:
+    """The span's identity as metric labels. Unqualified: these are label names, not OTel
+    span attributes, and Prometheus reads them straight."""
+    labels: dict[str, AttrValue] = {"span.name": name}
+    labels.update(
+        (dimension, attributes[dimension])
+        for dimension in METRIC_DIMENSIONS
+        if dimension in attributes
+    )
+    return labels

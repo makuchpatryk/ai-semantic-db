@@ -154,8 +154,11 @@ cli.command                         the command, start to exit
 
 Metrics derive from the same spans, so nothing can drift out of sync with what is traced:
 `semantic_db_span_duration_milliseconds` bucketed by `span.name`, and
-`semantic_db_errors_total` by `error.type`. Log lines carry the trace ID of the command
-that wrote them, so Loki links back to the trace in one click.
+`semantic_db_errors_total` by `error.type`. Both also carry `command` on the root span,
+since every root is named `cli.command` and one shared series would hide which command is
+slow or failing. No other attribute becomes a label: `collection` and `query` are unbounded
+cardinality and stay on the span. Log lines carry the trace ID of the command that wrote
+them, so Loki links back to the trace in one click.
 
 Query text is recorded verbatim in `semantic_db.query`. That is safe because the export
 target is always local; it would need revisiting before any remote exporter is offered.

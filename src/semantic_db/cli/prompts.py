@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from datetime import date
 from typing import cast
 
@@ -39,7 +40,7 @@ def prompt_field_definitions() -> list[FieldDefinition]:
 
 
 def prompt_record_values(
-    schema: CollectionSchema, defaults: dict[str, PayloadValue] | None = None
+    schema: CollectionSchema, defaults: Mapping[str, PayloadValue] | None = None
 ) -> Payload:
     """Collect record values interactively, with per-type input and re-prompt on error.
 

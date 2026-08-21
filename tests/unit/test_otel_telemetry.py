@@ -94,8 +94,45 @@ def test_errors_are_counted_by_type(
     assert point.value == 1  # type: ignore[attr-defined]
     assert point.attributes == {  # type: ignore[attr-defined]
         "span.name": "cli.command",
+        "command": "search",
         "error.type": "RuntimeError",
     }
+
+
+def test_commands_get_their_own_metric_series(
+    wired: tuple[OtelTelemetry, InMemorySpanExporter, InMemoryMetricReader],
+) -> None:
+    """Every root span is named `cli.command`, so without the `command` label the whole CLI
+    would share one histogram and per-command latency would be unreadable."""
+    telemetry, _, reader = wired
+
+    with telemetry.span("cli.command", command="search"):
+        pass
+    with telemetry.span("cli.command", command="record add"):
+        pass
+
+    points = metric_points(reader, "semantic_db.span.duration")
+    assert {point.attributes["command"] for point in points} == {  # type: ignore[attr-defined]
+        "search",
+        "record add",
+    }
+
+
+def test_unbounded_attributes_stay_off_the_metrics(
+    wired: tuple[OtelTelemetry, InMemorySpanExporter, InMemoryMetricReader],
+) -> None:
+    """A query or a collection name as a Prometheus label is unbounded cardinality. They
+    belong on the span, which is exactly where they stay."""
+    telemetry, exporter, reader = wired
+
+    with telemetry.span("use_case.search_records", collection="products", query="quiet pump"):
+        pass
+
+    point = metric_points(reader, "semantic_db.span.duration")[0]
+    assert point.attributes == {"span.name": "use_case.search_records"}  # type: ignore[attr-defined]
+    span = exporter.get_finished_spans()[0]
+    assert span.attributes is not None
+    assert span.attributes["semantic_db.query"] == "quiet pump"
 
 
 def test_a_successful_span_counts_no_error(
