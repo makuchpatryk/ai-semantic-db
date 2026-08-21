@@ -5,9 +5,11 @@ from semantic_db.application.use_cases.create_collection import (
     CreateCollection,
     CreateCollectionCommand,
 )
+from semantic_db.application.use_cases.search_records import SearchRecords, SearchRecordsCommand
 from semantic_db.domain.errors import (
     CollectionNotFoundError,
     DuplicateCollectionError,
+    EmbeddingModelMismatchError,
     EmbeddingUnavailableError,
     MissingRequiredFieldError,
     SchemaError,
@@ -108,3 +110,98 @@ async def test_add_record_rejects_a_wrong_dimension_vector() -> None:
         await use_case.execute(AddRecordCommand("products", PRODUCT_VALUES))
 
     assert records.records == []
+
+
+async def _with_records(
+    *titles: str,
+) -> tuple[InMemoryCollectionRepository, InMemoryRecordRepository, FakeEmbeddingProvider]:
+    """A products collection holding one record per title, embedded by the fake provider."""
+    collections, records = await _seeded()
+    embedder = FakeEmbeddingProvider()
+    add = AddRecord(collections, records, embedder)
+    for title in titles:
+        await add.execute(AddRecordCommand("products", {**PRODUCT_VALUES, "title": title}))
+    embedder.calls.clear()
+    return collections, records, embedder
+
+
+async def test_search_embeds_the_query_and_nothing_else() -> None:
+    collections, records, embedder = await _with_records("Pump A", "Pump B")
+
+    await SearchRecords(collections, records, embedder).execute(
+        SearchRecordsCommand("products", "quiet pump", k=10)
+    )
+
+    assert embedder.calls == [["quiet pump"]]
+
+
+async def test_search_ranks_the_nearest_record_first() -> None:
+    collections, records, embedder = await _with_records("Pump A", "Pump B", "Pump C")
+    # The fake embeds text deterministically, so a record's own card is its own nearest hit.
+    target = records.records[1]
+
+    result = await SearchRecords(collections, records, embedder).execute(
+        SearchRecordsCommand("products", target.rendered, k=10)
+    )
+
+    assert [hit.record.id for hit in result.hits][0] == target.id
+    assert result.hits[0].distance == pytest.approx(0.0)
+    distances = [hit.distance for hit in result.hits]
+    assert distances == sorted(distances)
+
+
+async def test_search_returns_at_most_k_hits() -> None:
+    collections, records, embedder = await _with_records("Pump A", "Pump B", "Pump C")
+
+    result = await SearchRecords(collections, records, embedder).execute(
+        SearchRecordsCommand("products", "pump", k=2)
+    )
+
+    assert len(result.hits) == 2
+
+
+async def test_search_returns_the_schema_the_cli_renders_with() -> None:
+    collections, records, embedder = await _with_records("Pump A")
+
+    result = await SearchRecords(collections, records, embedder).execute(
+        SearchRecordsCommand("products", "pump", k=10)
+    )
+
+    assert result.schema == PRODUCTS
+
+
+async def test_search_rejects_an_unknown_collection() -> None:
+    collections, records, embedder = await _with_records("Pump A")
+
+    with pytest.raises(CollectionNotFoundError):
+        await SearchRecords(collections, records, embedder).execute(
+            SearchRecordsCommand("ghosts", "pump", k=10)
+        )
+
+
+async def test_search_on_an_empty_collection_returns_no_hits() -> None:
+    """No records means no stored model, which must not read as a model mismatch."""
+    collections, records = await _seeded()
+
+    result = await SearchRecords(collections, records, FakeEmbeddingProvider()).execute(
+        SearchRecordsCommand("products", "pump", k=10)
+    )
+
+    assert result.hits == []
+    assert result.schema == PRODUCTS
+
+
+async def test_search_rejects_a_collection_embedded_with_another_model() -> None:
+    collections, _ = await _seeded()
+    records = InMemoryRecordRepository(model_name="bge-m3")
+    await AddRecord(collections, records, FakeEmbeddingProvider("bge-m3")).execute(
+        AddRecordCommand("products", PRODUCT_VALUES)
+    )
+    switched = FakeEmbeddingProvider("nomic-embed-text")
+
+    with pytest.raises(EmbeddingModelMismatchError, match="bge-m3"):
+        await SearchRecords(collections, records, switched).execute(
+            SearchRecordsCommand("products", "pump", k=10)
+        )
+
+    assert switched.calls == []  # the guard runs before the query is embedded

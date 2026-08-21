@@ -143,3 +143,64 @@ async def test_second_collection_with_a_different_shape(session_factory: Session
             "Genres: sci-fi, philosophy\n"
             "In print: yes"
         )  # shelf_code is not embedded, so it is not in the card
+
+
+async def add_product(title: str, description: str, category: str) -> None:
+    result = await invoke(
+        [
+            "record",
+            "add",
+            "products",
+            *set_args(
+                {
+                    "title": title,
+                    "description": description,
+                    "category": category,
+                    "year": "2019",
+                    "price": "4200",
+                }
+            ),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+
+async def test_search_finds_the_record_that_matches_the_query(
+    session_factory: SessionFactory,
+) -> None:
+    """The whole point of the tool: added means searchable, in natural language."""
+    await create_products()
+    await add_product("Hydraulic pump HP-400", "Cast-iron housing, rated 400 l/min.", "pumps")
+    await add_product("Brass gate valve GV-20", "Manual shut-off for water lines.", "valves")
+
+    result = await invoke(["search", "products", "quiet pump for industrial use", "--k", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert "Hydraulic" in result.stdout
+    assert "Brass" not in result.stdout
+
+
+async def test_search_explain_shows_the_embedded_card(session_factory: SessionFactory) -> None:
+    await create_products()
+    await add_product("Hydraulic pump HP-400", "Cast-iron housing, rated 400 l/min.", "pumps")
+
+    result = await invoke(["search", "products", "pump", "--explain"])
+
+    assert result.exit_code == 0, result.output
+    assert "Cast-iron" in result.stdout  # --explain prints the rendered text, not just the title
+
+
+async def test_search_on_an_empty_collection_says_so(session_factory: SessionFactory) -> None:
+    await create_products()
+
+    result = await invoke(["search", "products", "anything"])
+
+    assert result.exit_code == 0, result.output
+    assert "No results" in result.stdout
+
+
+async def test_search_on_an_unknown_collection_is_rejected(
+    session_factory: SessionFactory,
+) -> None:
+    result = await invoke(["search", "ghosts", "anything"])
+    assert result.exit_code == 2
