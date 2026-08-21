@@ -19,6 +19,7 @@ type = forbidden
 source_modules =
     semantic_db.domain
 forbidden_modules =
+    opentelemetry
     sqlalchemy
     typer
     httpx
@@ -33,6 +34,7 @@ type = forbidden
 source_modules =
     semantic_db.application
 forbidden_modules =
+    opentelemetry
     sqlalchemy
     typer
     httpx

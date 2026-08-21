@@ -42,7 +42,9 @@ def create(
             raise typer.Exit(1)
 
     cmd = CreateCollectionCommand(name=name, fields=fields)
-    collection = run(lambda container: container.create_collection.execute(cmd))
+    collection = run(
+        lambda container: container.create_collection.execute(cmd), "collection create"
+    )
     console.print(
         f"[green]✓[/] created collection '{collection.name}' "
         f"with {len(collection.schema.fields)} fields"

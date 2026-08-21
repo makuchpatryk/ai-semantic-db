@@ -1,6 +1,10 @@
+import logging
+
 import httpx
 
 from semantic_db.domain.errors import EmbeddingUnavailableError
+
+logger = logging.getLogger(__name__)
 
 EMBED_TIMEOUT_SECONDS = 60.0
 
@@ -22,12 +26,14 @@ class OllamaEmbeddingProvider:
                 response.raise_for_status()
                 body = response.json()
         except httpx.HTTPStatusError as exc:
+            logger.warning("ollama rejected the embed request: %s", exc.response.status_code)
             raise EmbeddingUnavailableError(
                 f"Ollama at {self._base_url} rejected the request "
                 f"({exc.response.status_code}). Is the model pulled? "
                 f"Try: ollama pull {self.model_name}"
             ) from exc
         except httpx.HTTPError as exc:
+            logger.warning("ollama at %s is unreachable: %s", self._base_url, exc)
             raise EmbeddingUnavailableError(
                 f"cannot reach Ollama at {self._base_url} ({exc}). Try: ollama serve"
             ) from exc

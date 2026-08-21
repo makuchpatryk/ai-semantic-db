@@ -490,7 +490,7 @@ Ordered by what each one buys, not by effort.
 |---|---|---|
 | R1 | Schema abstraction only works for the demo domain | **Closed** — `books` passed the second-collection test (§12) |
 | R2 | Hand entry too tedious to reach a useful corpus | Add-another loop, prefilled defaults, flag path for scripted seeding; bulk ingest is first on the roadmap if it bites. `scripts/seed_products.sh` exists but **is written against a `--field name type --embed` syntax that was never built** — it needs rewriting to the `--field "name:type:flags"` grammar of §4.2 before it runs |
-| R3 | Embedding on save feels slow | ~400ms is tolerable; if not, queue and embed on a background pass |
+| R3 | Embedding on save feels slow | **Measured** (§16): the `embed` span is p50 384ms / p95 569ms on `bge-m3` for a single card, against 20ms for the pgvector query. Tolerable, and the guess it replaces was right. If it stops being tolerable, queue and embed on a background pass |
 | R4 | Clean Architecture becomes ceremony at this size | One use case per command; no port without a second implementation or a test that needs the seam |
 | R5a | `collection edit` re-embeds the whole corpus on an `embed` toggle | Progress bar, cost stated before starting, `--yes` for scripts; corpus is small by design |
 | R5b | Accidental `collection delete` | Typed-name confirmation, not y/n; `--yes` only for scripted use |
@@ -504,3 +504,41 @@ Ordered by what each one buys, not by effort.
 1. ~~**Demo domain** — which collection ships as the example?~~ **Answered: industrial `products`** (pumps, motors, valves, sensors), used in the README, the seed script, and the tests, with `books` as the second shape.
 2. ~~**Record language** — Polish, English, or mixed?~~ **Answered: English**, throughout the fixtures and the seed corpus. `bge-m3` still allows a Polish corpus later without a schema change.
 3. **Branch protection** — the workflow exists; the five jobs still have to be set as required status checks in the repository settings, or a red PR stays mergeable (§11).
+
+---
+
+## 16. Observability
+
+Off by default (`SEMANTIC_DB_TELEMETRY_ENABLED=false`). Switched on, the CLI exports
+OpenTelemetry traces, metrics and logs over OTLP/HTTP to `grafana/otel-lgtm` running
+locally — one container beside Postgres, reached with `make obs-up`. Nothing leaves the
+machine, so §1's "fully local" claim is unchanged.
+
+One command is one trace:
+
+```
+cli.command → use_case.* → { embed → POST /api/embed, db.search → SELECT }
+```
+
+The hand-written spans carry the domain facts — collection, k, query, hit count, distance
+min and mean, embedding model and dimension. The HTTP and SQL children come from the
+httpx and SQLAlchemy instrumentations.
+
+| # | Decision | Consequence |
+|---|---|---|
+| D1 | OTel and Grafana only; no `searches` table | This buys latency insight, not retrieval quality. Eval data needs durable rows and belongs to the eval harness (§13), not to 14-day trace retention |
+| D2 | OTel packages are core dependencies | Every install carries them; no conditional import and no `ImportError` branch to test |
+| D3 | Query text recorded verbatim in `semantic_db.query` | Acceptable while the exporter is local-only and the corpus is the user's own. Revisit before any remote exporter |
+| D4 | CI runs `otel-lgtm` as a service container | The integration test asserts a trace really lands, not just that spans have the right shape |
+| D5 | Off unless explicitly enabled | A default install builds no providers, starts no threads and never warns about an absent collector |
+| D6 | All three signals | Logs are the weakest leg: the OTel Python logs SDK is still private, so every `_logs` import sits in one file |
+| D7 | Metrics derive from spans | `Telemetry.span()` records `semantic_db_span_duration_milliseconds` and, on failure, `semantic_db_errors_total`. One port method, so the metrics cannot drift from what is traced |
+
+`Telemetry` is the fourth port and earns its place under §9.1 twice over: `NullTelemetry`
+ships as the default implementation and `RecordingTelemetry` is the seam the use-case tests
+assert through. The port is framework-free, and the import contracts now forbid
+`opentelemetry` in both `domain` and `application`.
+
+Instrumentation is observation only: it never changes an exit code, a Rich message or a
+failure path. A collector that is down costs the CLI a couple of seconds at teardown — one bounded
+export attempt per signal — and prints nothing.

@@ -18,7 +18,7 @@ def search(
 ) -> None:
     """Search a collection for records similar to the query."""
     cmd = SearchRecordsCommand(collection_name=collection, query=query, k=k)
-    result = run(lambda c: c.search_records.execute(cmd))
+    result = run(lambda c: c.search_records.execute(cmd), "search")
 
     if not result.hits:
         console.print("[yellow]No results found.[/]")

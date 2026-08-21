@@ -1,10 +1,16 @@
-.PHONY: up down migrate revision check lint types arch unit test-integration
+.PHONY: up down obs-up obs-down migrate revision check lint types arch unit test-integration
 
 up:
 	docker compose up -d --wait
 
 down:
 	docker compose down
+
+obs-up:
+	docker compose --profile obs up -d otel-lgtm
+
+obs-down:
+	docker compose --profile obs down
 
 migrate:
 	uv run alembic upgrade head

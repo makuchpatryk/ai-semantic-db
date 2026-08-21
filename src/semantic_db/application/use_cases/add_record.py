@@ -7,6 +7,7 @@ from semantic_db.application.ports import (
     EmbeddingProvider,
     RecordRepository,
 )
+from semantic_db.application.telemetry import Telemetry
 from semantic_db.domain.errors import CollectionNotFoundError
 from semantic_db.domain.record import Record
 from semantic_db.domain.rendering import render
@@ -27,19 +28,24 @@ class AddRecord:
         collections: CollectionRepository,
         records: RecordRepository,
         embedder: EmbeddingProvider,
+        telemetry: Telemetry,
     ) -> None:
         self._collections = collections
         self._records = records
         self._embedder = embedder
+        self._telemetry = telemetry
 
     async def execute(self, cmd: AddRecordCommand) -> Record:
-        collection = await self._collections.get(cmd.collection_name)
-        if collection is None or collection.id is None:
-            raise CollectionNotFoundError(cmd.collection_name)
+        with self._telemetry.span("use_case.add_record", collection=cmd.collection_name) as scope:
+            collection = await self._collections.get(cmd.collection_name)
+            if collection is None or collection.id is None:
+                raise CollectionNotFoundError(cmd.collection_name)
 
-        payload = coerce_payload(collection.schema, cmd.values)
-        rendered = render(collection.schema, payload)
-        vec = await embed_one(self._embedder, rendered)
+            payload = coerce_payload(collection.schema, cmd.values)
+            rendered = render(collection.schema, payload)
+            scope.set(text_chars=len(rendered))
+            vec = await embed_one(self._embedder, rendered, self._telemetry)
 
-        record = Record(collection_id=collection.id, payload=payload, rendered=rendered)
-        return await self._records.add(collection.id, record, vec)
+            record = Record(collection_id=collection.id, payload=payload, rendered=rendered)
+            with self._telemetry.span("db.add", collection_id=collection.id):
+                return await self._records.add(collection.id, record, vec)

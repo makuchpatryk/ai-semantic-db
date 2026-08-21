@@ -42,7 +42,7 @@ def _add_with_values(collection: str, values: Mapping[str, object]) -> None:
     """Add a record with --set flags."""
     cmd = AddRecordCommand(collection_name=collection, values=values)
     started = perf_counter()
-    record = run(lambda container: container.add_record.execute(cmd))
+    record = run(lambda container: container.add_record.execute(cmd), "record add")
     elapsed_ms = int((perf_counter() - started) * 1000)
 
     console.print(Panel(record.rendered, title="Saved", title_align="left"))
@@ -56,7 +56,7 @@ def _add_interactive(collection: str) -> None:
     defaults: Payload = {}
 
     while True:
-        schema = run(lambda c: c.queries.get_collection(collection))
+        schema = run(lambda c: c.queries.get_collection(collection), "record add")
         values = prompt_record_values(schema.schema, defaults)
         console.print(preview_panel(schema.schema, values))
 
@@ -69,7 +69,7 @@ def _add_interactive(collection: str) -> None:
         async def _execute(container, cmd=cmd):  # type: ignore[no-untyped-def]
             return await container.add_record.execute(cmd)
 
-        record = run(_execute)
+        record = run(_execute, "record add")
         elapsed_ms = int((perf_counter() - started) * 1000)
 
         console.print(Panel(record.rendered, title="Saved", title_align="left"))

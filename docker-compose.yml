@@ -16,5 +16,20 @@ services:
       timeout: 3s
       retries: 30
 
+  # Traces, metrics and logs in one container, behind a profile so `make up` stays
+  # Postgres-only. Nothing leaves the machine: the CLI exports to localhost:4318.
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.31.0
+    container_name: semantic-db-otel-lgtm
+    profiles: ["obs"]
+    ports:
+      - "3000:3000"   # Grafana
+      - "4317:4317"   # OTLP/gRPC
+      - "4318:4318"   # OTLP/HTTP — what the CLI uses
+      - "3200:3200"   # Tempo API — the integration test reads traces back from here
+    volumes:
+      - lgtmdata:/data
+
 volumes:
   pgdata:
+  lgtmdata:

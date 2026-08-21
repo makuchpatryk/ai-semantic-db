@@ -78,6 +78,13 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
+      # Traces, metrics and logs in one image. No healthcheck ships with it, so the job
+      # polls Tempo below. Pinned, never `latest`: a moving backend is a flaky suite.
+      otel-lgtm:
+        image: grafana/otel-lgtm:0.31.0
+        ports:
+          - 4318:4318
+          - 3200:3200
     env:
       SEMANTIC_DB_DATABASE_URL: postgresql+asyncpg://semantic:semantic@localhost:5432/semantic_db
       # Must match settings.embedding_model: the vec column is halfvec(1024).
@@ -107,6 +114,14 @@ jobs:
           echo "ollama did not come up" && cat /tmp/ollama.log && exit 1
       - name: Pull the embedding model
         run: ollama pull "$EMBEDDING_MODEL"
+
+      - name: Wait for the telemetry backend
+        run: |
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:3200/ready > /dev/null && exit 0
+            sleep 1
+          done
+          echo "otel-lgtm did not come up" && exit 1
 
       - run: uv run pytest -m integration
       # Catches SQLAlchemy models edited without a matching migration.
