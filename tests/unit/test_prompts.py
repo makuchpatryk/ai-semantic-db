@@ -4,6 +4,8 @@ import pytest
 
 from semantic_db.cli import prompts
 from semantic_db.cli.field_spec import parse_field_spec
+from semantic_db.domain.collection import CollectionSchema, FieldDefinition
+from semantic_db.domain.field_types import FieldType
 from tests.schemas import PRODUCTS, PRODUCTS_FIELD_SPECS
 
 EMBED = prompts.EMBED_LABEL
@@ -74,23 +76,82 @@ def test_empty_name_ends_the_loop_immediately(script: Any) -> None:
     assert prompts.prompt_field_definitions() == []
 
 
-@pytest.mark.skip(reason="Interactive flow needs TTY, not testable with mocks")
-def test_invalid_field_is_reprompted_not_fatal(script: Any) -> None:
-    script(["Title", "text", [EMBED], "title", "text", [EMBED], ""])
+def test_invalid_field_name_is_reprompted_not_fatal(script: Any) -> None:
+    script(
+        [
+            "Title",
+            "text",
+            "y",
+            "n",  # rejected: names must be lowercase
+            "title",
+            "text",
+            "y",
+            "n",  # asked again, answered properly
+            "",  # empty name ends the loop
+        ]
+    )
 
     fields = prompts.prompt_field_definitions()
 
     assert [field.name for field in fields] == ["title"]
 
 
-@pytest.mark.skip(reason="PromptAborted needs actual TTY input, not testable with mocks")
-def test_aborting_a_prompt_raises(script: Any) -> None:
-    script([None])
-    with pytest.raises(prompts.PromptAborted):
-        prompts.prompt_field_definitions()
+def test_unknown_type_is_reprompted_not_fatal(script: Any) -> None:
+    """A typo in the type must not kill the schema being built part way through."""
+    script(
+        [
+            "title",
+            "banana",  # unknown type: no further question is asked
+            "title",
+            "text",
+            "y",
+            "n",
+            "",
+        ]
+    )
+
+    fields = prompts.prompt_field_definitions()
+
+    assert [field.name for field in fields] == ["title"]
+    assert fields[0].type is FieldType.TEXT
 
 
-@pytest.mark.skip(reason="confirm() needs TTY input, not testable with mocks")
 def test_confirm_returns_the_answer(script: Any) -> None:
-    script([True])
+    script(["y", "n", "", ""])
+
     assert prompts.confirm("Create?") is True
+    assert prompts.confirm("Create?") is False
+    assert prompts.confirm("Create?") is False  # empty falls back to the default
+    assert prompts.confirm("Create?", default=True) is True
+
+
+REQUIRED_BOOL = CollectionSchema(
+    fields=(FieldDefinition(name="in_print", type=FieldType.BOOL, embed=True, required=True),)
+)
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ("y", True),
+        ("yes", True),
+        ("true", True),
+        ("1", True),
+        ("n", False),
+        ("no", False),
+        ("false", False),
+        ("0", False),
+    ],
+)
+def test_required_bool_accepts_every_literal_the_set_flag_accepts(
+    script: Any, answer: str, expected: bool
+) -> None:
+    script([answer])
+    assert prompts.prompt_record_values(REQUIRED_BOOL) == {"in_print": expected}
+
+
+def test_required_bool_reprompts_instead_of_silently_storing_false(script: Any) -> None:
+    """An unrecognised answer must be an error, not a quiet `no` (regression)."""
+    script(["ture", "yes"])
+
+    assert prompts.prompt_record_values(REQUIRED_BOOL) == {"in_print": True}

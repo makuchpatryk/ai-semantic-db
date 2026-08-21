@@ -77,31 +77,34 @@ def confirm(message: str, *, default: bool = False) -> bool:
 
 
 def _prompt_one(name: str) -> FieldDefinition | None:
+    """Ask for one field definition, or return None after reporting a bad answer.
+
+    Every way a field can be invalid arrives here as a SchemaError, so the wizard
+    reports it and asks again instead of dying half way through a schema.
+    """
     session: PromptSession[str] = PromptSession()
     field_types = [str(t) for t in FieldType]
     completer = WordCompleter(field_types, ignore_case=True)
 
-    field_type = FieldType(
-        session.prompt(f"Type [{field_types[0]}]: ", completer=completer).strip() or "text"
-    )
-
-    enum_values: tuple[str, ...] | None = None
-    if field_type is FieldType.ENUM:
-        raw = session.prompt("Enum values (comma-separated): ").strip()
-        enum_values = tuple(value.strip() for value in raw.split(",") if value.strip())
-
-    unit: str | None = None
-    if field_type in UNIT_TYPES:
-        unit = session.prompt("Unit (optional, e.g. PLN): ").strip() or None
-
-    console.print("Options: (press Space to toggle, Enter to confirm)")
-    options = []
-    for label in [EMBED_LABEL, REQUIRED_LABEL]:
-        ans = session.prompt(f"  {label}? [Y/n]: ").strip().lower()
-        if ans != "n":
-            options.append(label)
-
     try:
+        field_type = _ask_field_type(session, completer, field_types)
+
+        enum_values: tuple[str, ...] | None = None
+        if field_type is FieldType.ENUM:
+            raw = session.prompt("Enum values (comma-separated): ").strip()
+            enum_values = tuple(value.strip() for value in raw.split(",") if value.strip())
+
+        unit: str | None = None
+        if field_type in UNIT_TYPES:
+            unit = session.prompt("Unit (optional, e.g. PLN): ").strip() or None
+
+        console.print("Options: (press Space to toggle, Enter to confirm)")
+        options = []
+        for label in [EMBED_LABEL, REQUIRED_LABEL]:
+            ans = session.prompt(f"  {label}? [Y/n]: ").strip().lower()
+            if ans != "n":
+                options.append(label)
+
         return FieldDefinition(
             name=name,
             type=field_type,
@@ -113,6 +116,17 @@ def _prompt_one(name: str) -> FieldDefinition | None:
     except SchemaError as exc:
         error_console.print(f"[bold red]Error:[/] {exc}")
         return None
+
+
+def _ask_field_type(
+    session: PromptSession[str], completer: WordCompleter, field_types: list[str]
+) -> FieldType:
+    """Same error contract as the `--field` path: an unknown type is a SchemaError."""
+    raw = session.prompt(f"Type [{field_types[0]}]: ", completer=completer).strip() or "text"
+    try:
+        return FieldType(raw)
+    except ValueError:
+        raise SchemaError(f"unknown type '{raw}'; valid types: {', '.join(field_types)}") from None
 
 
 def _ask_text(message: str) -> str:
@@ -225,8 +239,8 @@ def _ask_bool_field(
     session: PromptSession[str] = PromptSession()
     if field.required:
         default = "y" if prev else "n"
-        ans = session.prompt(f"{label} [y/n]: ", default=default).strip().lower()
-        return ans in ("y", "yes")
+        ans = session.prompt(f"{label} [y/n]: ", default=default).strip()
+        return cast(bool, coerce_value(field, ans))
 
     choices = ["yes", "no", "(skip)"]
     default = "yes" if prev else "(skip)"
