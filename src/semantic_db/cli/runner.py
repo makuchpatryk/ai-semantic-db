@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 
@@ -10,6 +11,8 @@ from semantic_db.domain.errors import SemanticDbError
 
 console = Console()
 error_console = Console(stderr=True)
+
+logger = logging.getLogger("semantic_db.cli")
 
 VALIDATION_EXIT_CODE = 2
 
@@ -25,13 +28,24 @@ def guard() -> Iterator[None]:
         raise typer.Exit(VALIDATION_EXIT_CODE) from exc
 
 
-def run[T](main: Callable[[Container], Awaitable[T]]) -> T:
+def run[T](main: Callable[[Container], Awaitable[T]], command: str) -> T:
     """Bridge Typer's sync commands to the async use cases, and turn every domain
-    error into a message plus exit code 2 instead of a traceback."""
+    error into a message plus exit code 2 instead of a traceback.
+
+    `command` names the root span. It is passed rather than inspected from the frame so
+    the span name is a stated fact, not a guess about the caller.
+    """
 
     async def _run() -> T:
         async with build_container() as container:
-            return await main(container)
+            with container.telemetry.span("cli.command", command=command):
+                logger.info("%s started", command)
+                try:
+                    return await main(container)
+                except SemanticDbError as exc:
+                    # Logged inside the span so the log record carries its trace ID.
+                    logger.warning("%s failed: %s", command, exc)
+                    raise
 
     try:
         return asyncio.run(_run())

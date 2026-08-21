@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     embedding_model: str = "bge-m3"
     embedding_dim: int = 1024
 
+    # Off by default: a default install builds no providers and never warns about an
+    # absent collector. The endpoint stays local — nothing is exported off the machine.
+    telemetry_enabled: bool = False
+    otlp_endpoint: str = "http://localhost:4318"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

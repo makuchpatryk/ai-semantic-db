@@ -125,6 +125,50 @@ Configure via `.env` or environment variables (see `.env.example`):
 | `SEMANTIC_DB_OLLAMA_BASE_URL` | `http://localhost:11434` |
 | `SEMANTIC_DB_EMBEDDING_MODEL` | `bge-m3` |
 | `SEMANTIC_DB_EMBEDDING_DIM` | `1024` |
+| `SEMANTIC_DB_TELEMETRY_ENABLED` | `false` |
+| `SEMANTIC_DB_OTLP_ENDPOINT` | `http://localhost:4318` |
+
+## Observability
+
+Off by default. Switched on, the CLI emits OpenTelemetry traces, metrics and logs over
+OTLP/HTTP to a Grafana LGTM stack running in one container next to Postgres. The endpoint
+is `localhost` — telemetry does not change the "fully local" promise.
+
+```bash
+make obs-up                                  # Grafana on :3000 (admin/admin), OTLP on :4318
+SEMANTIC_DB_TELEMETRY_ENABLED=true semantic-db search products "quiet pump"
+make obs-down
+```
+
+Open Grafana → Explore → Tempo and search for `{name="cli.command"}`. One command is one
+trace:
+
+```
+cli.command                         the command, start to exit
+└── use_case.search_records         collection, k, query, hits, distance.min, distance.mean
+    ├── embed                       model, dim, text chars
+    │   └── POST                    the Ollama call (httpx auto-instrumentation)
+    └── db.search                   collection id, k
+        └── SELECT                  the pgvector query (SQLAlchemy auto-instrumentation)
+```
+
+Metrics derive from the same spans, so nothing can drift out of sync with what is traced:
+`semantic_db_span_duration_milliseconds` bucketed by `span.name`, and
+`semantic_db_errors_total` by `error.type`. Both also carry `command` on the root span,
+since every root is named `cli.command` and one shared series would hide which command is
+slow or failing. No other attribute becomes a label: `collection` and `query` are unbounded
+cardinality and stay on the span. Log lines carry the trace ID of the command that wrote
+them, so Loki links back to the trace in one click.
+
+Query text is recorded verbatim in `semantic_db.query`. That is safe because the export
+target is always local; it would need revisiting before any remote exporter is offered.
+
+With telemetry off, no providers are built, no exporter threads start and nothing is sent.
+With it on and no collector listening, the CLI still succeeds and stays silent; it gives
+up after one bounded attempt per signal, which costs a couple of seconds at exit.
+
+`grafana/otel-lgtm` is Apache-2.0 and wraps AGPLv3 components. Running the stock image
+locally, unmodified and unredistributed, triggers no AGPL obligations.
 
 ## Development
 

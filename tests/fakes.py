@@ -1,5 +1,9 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from hashlib import sha256
 
+from semantic_db.application.telemetry import AttrValue, SpanScope, qualify
 from semantic_db.domain.collection import Collection
 from semantic_db.domain.errors import DuplicateCollectionError
 from semantic_db.domain.record import Record, ScoredRecord
@@ -84,6 +88,45 @@ class BrokenEmbeddingProvider(FakeEmbeddingProvider):
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] * (self.dim - 1) for _ in texts]
+
+
+@dataclass
+class RecordedSpan:
+    name: str
+    attributes: dict[str, AttrValue] = field(default_factory=dict)
+    error_type: str | None = None
+    ended: bool = False
+
+    def set(self, **attributes: AttrValue) -> None:
+        self.attributes.update(qualify(attributes))
+
+
+class RecordingTelemetry:
+    """Captures span shape without an SDK, so use-case tests assert what is instrumented.
+
+    Attribute names are qualified exactly as the exporter qualifies them, so a test that
+    passes here asserts the names that really reach Tempo."""
+
+    def __init__(self) -> None:
+        self.spans: list[RecordedSpan] = []
+
+    @contextmanager
+    def span(self, name: str, **attributes: AttrValue) -> Iterator[SpanScope]:
+        recorded = RecordedSpan(name=name, attributes=qualify(attributes))
+        self.spans.append(recorded)
+        try:
+            yield recorded
+        except BaseException as exc:
+            recorded.error_type = type(exc).__name__
+            raise
+        finally:
+            recorded.ended = True
+
+    def named(self, name: str) -> RecordedSpan:
+        """The single span with this name, or an assertion failure."""
+        matches = [span for span in self.spans if span.name == name]
+        assert len(matches) == 1, f"expected one {name!r} span, got {len(matches)}"
+        return matches[0]
 
 
 def _cosine_distance(a: list[float], b: list[float]) -> float:
