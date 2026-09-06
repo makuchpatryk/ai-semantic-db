@@ -1,14 +1,15 @@
 from hashlib import sha256
 
-from semantic_db.domain.collection import Collection
+from semantic_db.domain.collection import Collection, CollectionSummary
 from semantic_db.domain.errors import DuplicateCollectionError
-from semantic_db.domain.record import Record, ScoredRecord
+from semantic_db.domain.record import Record, RecordDetail, ScoredRecord
 
 
 class InMemoryCollectionRepository:
     def __init__(self) -> None:
         self.collections: dict[str, Collection] = {}
         self._next_id = 1
+        self._record_repo: InMemoryRecordRepository | None = None
 
     async def create(self, collection: Collection) -> Collection:
         if collection.name in self.collections:
@@ -20,6 +21,23 @@ class InMemoryCollectionRepository:
 
     async def get(self, name: str) -> Collection | None:
         return self.collections.get(name)
+
+    async def list(self) -> list[CollectionSummary]:
+        summaries = []
+        for collection in sorted(self.collections.values(), key=lambda c: c.name):
+            record_count = 0
+            if self._record_repo is not None:
+                record_count = sum(
+                    1 for r in self._record_repo.records if r.collection_id == collection.id
+                )
+            summaries.append(
+                CollectionSummary(
+                    name=collection.name,
+                    field_count=len(collection.schema.fields),
+                    record_count=record_count,
+                )
+            )
+        return summaries
 
 
 class InMemoryRecordRepository:
@@ -60,6 +78,20 @@ class InMemoryRecordRepository:
         if collection_id in self.collections_with_records:
             return frozenset({self._model_name})
         return frozenset()
+
+    async def get(self, collection_id: int, record_id: int) -> RecordDetail | None:
+        for record in self.records:
+            if record.collection_id == collection_id and record.id == record_id:
+                return RecordDetail(record=record, model=self._model_name)
+        return None
+
+    async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]:
+        filtered = [r for r in self.records if r.collection_id == collection_id]
+        filtered.sort(key=lambda r: r.id or 0)
+        return filtered[offset : offset + limit]
+
+    async def count(self, collection_id: int) -> int:
+        return sum(1 for r in self.records if r.collection_id == collection_id)
 
 
 class FakeEmbeddingProvider:

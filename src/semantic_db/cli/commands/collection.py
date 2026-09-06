@@ -1,6 +1,7 @@
 from typing import Annotated
 
 import typer
+from rich.table import Table
 
 from semantic_db.application.use_cases.create_collection import CreateCollectionCommand
 from semantic_db.cli.field_spec import parse_field_spec
@@ -52,3 +53,54 @@ def create(
 def _preview(fields: list[FieldDefinition]) -> None:
     # Validates the schema as a whole before anything is written or confirmed.
     print_schema_preview(CollectionSchema(fields=tuple(fields)))
+
+
+@collection_app.command("list")
+def list_cmd() -> None:
+    """List all collections with their field and record counts."""
+    summaries = run(lambda c: c.queries.list_collections())
+
+    if not summaries:
+        console.print("No collections yet.")
+        return
+
+    table = Table()
+    table.add_column("Name", style="cyan")
+    table.add_column("Fields", style="magenta")
+    table.add_column("Records", style="green")
+
+    for summary in summaries:
+        table.add_row(summary.name, str(summary.field_count), str(summary.record_count))
+
+    console.print(table)
+
+
+@collection_app.command("show")
+def show_cmd(name: Annotated[str, typer.Argument(help="Collection name")]) -> None:
+    """Show the schema of a collection."""
+    collection = run(lambda c: c.queries.show_collection(name))
+
+    table = Table()
+    table.add_column("Field", style="cyan")
+    table.add_column("Type", style="magenta")
+    table.add_column("Flags", style="yellow")
+    table.add_column("Values/Unit", style="green")
+
+    for field in collection.schema.fields:
+        flags = []
+        if field.embed:
+            flags.append("embed")
+        if field.required:
+            flags.append("required")
+        flags_str = ", ".join(flags) if flags else ""
+
+        values_unit = ""
+        if field.enum_values:
+            values_unit = ", ".join(field.enum_values)
+        elif field.unit:
+            values_unit = field.unit
+
+        table.add_row(field.name, str(field.type.value), flags_str, values_unit)
+
+    console.print(table)
+    print_schema_preview(collection.schema)

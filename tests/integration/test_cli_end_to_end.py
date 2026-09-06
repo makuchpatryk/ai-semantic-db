@@ -204,3 +204,166 @@ async def test_search_on_an_unknown_collection_is_rejected(
 ) -> None:
     result = await invoke(["search", "ghosts", "anything"])
     assert result.exit_code == 2
+
+
+async def test_collection_list_shows_field_and_record_counts(
+    session_factory: SessionFactory,
+) -> None:
+    """Collection list shows all collections with their metadata."""
+    await create_products()
+    await invoke(["collection", "create", "books", *field_args(BOOKS_FIELD_SPECS)])
+
+    # Add 3 records to products
+    for i in range(3):
+        await add_product(f"Product {i}", f"Description {i}", "pumps")
+
+    # Add 1 record to books
+    await invoke(
+        [
+            "record",
+            "add",
+            "books",
+            *set_args(
+                {
+                    "author": "Author 1",
+                    "published": "1961-05-04",
+                    "genres": "sci-fi",
+                    "in_print": "y",
+                    "shelf_code": "A-12",
+                }
+            ),
+        ],
+    )
+
+    result = await invoke(["collection", "list"])
+
+    assert result.exit_code == 0, result.output
+    # Should show both collections in alphabetical order
+    assert "books" in result.stdout
+    assert "products" in result.stdout
+    # Both have 5 fields, 3 records in products, 1 in books
+    # Just check that both show up with their data
+    lines = result.stdout.split("\n")
+    # Find lines with books and products data
+    books_line = [line for line in lines if "books" in line]
+    products_line = [line for line in lines if "products" in line]
+    assert len(books_line) > 0
+    assert len(products_line) > 0
+    # products should have 3 records, books should have 1
+    assert "│ products │ 5      │ 3       │" in result.stdout
+    assert "│ books    │ 5      │ 1       │" in result.stdout
+
+
+async def test_collection_show_displays_schema(session_factory: SessionFactory) -> None:
+    """Collection show displays the full schema with field details."""
+    await create_products()
+
+    result = await invoke(["collection", "show", "products"])
+
+    assert result.exit_code == 0, result.output
+    # Should show field names
+    assert "title" in result.stdout
+    assert "description" in result.stdout
+    assert "category" in result.stdout
+    # Should show field types
+    assert "text" in result.stdout
+    assert "int" in result.stdout
+    assert "enum" in result.stdout
+    # Should show flags
+    assert "embed" in result.stdout
+    # Should show enum values
+    assert "pumps" in result.stdout
+
+
+async def test_collection_list_on_empty_database_says_so(session_factory: SessionFactory) -> None:
+    """Collection list on empty database shows friendly message."""
+    result = await invoke(["collection", "list"])
+    assert result.exit_code == 0, result.output
+    assert "No collections yet" in result.stdout
+
+
+async def test_record_list_shows_id_and_embedded_fields(session_factory: SessionFactory) -> None:
+    """Record list shows paginated results with ID and embedded fields."""
+    await create_products()
+
+    # Add 3 records
+    await add_product("Pump A", "Desc A", "pumps")
+    await add_product("Valve B", "Desc B", "valves")
+    await add_product("Motor C", "Desc C", "motors")
+
+    result = await invoke(["record", "list", "products"])
+
+    assert result.exit_code == 0, result.output
+    # Should show ID column and data
+    assert "ID" in result.stdout
+    # Should show embedded fields (title is the first embeddable)
+    assert "Title" in result.stdout or "title" in result.stdout.lower()
+    # Should show the records
+    assert "Pump A" in result.stdout
+    assert "Valve B" in result.stdout
+    assert "Motor C" in result.stdout
+    # Should show pagination footer
+    assert "showing" in result.stdout
+    assert "of" in result.stdout
+
+
+async def test_record_list_with_pagination(session_factory: SessionFactory) -> None:
+    """Record list respects limit and offset."""
+    await create_products()
+
+    # Add 5 records
+    for i in range(5):
+        await add_product(f"Product {i}", f"Desc {i}", "pumps")
+
+    # First page: limit 2, offset 0
+    result = await invoke(["record", "list", "products", "--limit", "2", "--offset", "0"])
+    assert result.exit_code == 0, result.output
+    assert "showing 1-2 of 5" in result.stdout
+
+    # Second page: limit 2, offset 2
+    result = await invoke(["record", "list", "products", "--limit", "2", "--offset", "2"])
+    assert result.exit_code == 0, result.output
+    assert "showing 3-4 of 5" in result.stdout
+
+
+async def test_record_list_on_empty_collection_says_so(session_factory: SessionFactory) -> None:
+    """Record list on empty collection shows friendly message."""
+    await create_products()
+
+    result = await invoke(["record", "list", "products"])
+
+    assert result.exit_code == 0, result.output
+    assert "No records" in result.stdout
+
+
+async def test_record_show_displays_full_record_details(session_factory: SessionFactory) -> None:
+    """Record show displays the full record payload and rendering."""
+    await create_products()
+    await add_product("Pump A", "Description of pump A", "pumps")
+
+    # Get the record ID
+    async with session_factory() as session:
+        record = await session.scalar(select(RecordModel))
+        assert record is not None
+        record_id = record.id
+
+    result = await invoke(["record", "show", "products", str(record_id)])
+
+    assert result.exit_code == 0, result.output
+    # Should show the rendered text
+    assert "Pump A" in result.stdout
+    # Should show full payload (including non-embedded fields like description)
+    assert "Description of pump A" in result.stdout or "description" in result.stdout.lower()
+    # Should show model name
+    assert "Model:" in result.stdout
+    assert "bge-m3" in result.stdout
+
+
+async def test_record_show_not_found(session_factory: SessionFactory) -> None:
+    """Record show with non-existent ID exits 2."""
+    await create_products()
+
+    result = await invoke(["record", "show", "products", "999"])
+
+    assert result.exit_code == 2
+    assert "not found" in result.stdout or "not found" in result.stderr

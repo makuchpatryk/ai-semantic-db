@@ -64,3 +64,10 @@ class EmbeddingModelMismatchError(SemanticDbError):
             f"collection '{collection}' was embedded with {stored}, "
             f"current model is {current}; re-embed the collection or switch the model back"
         )
+
+
+class RecordNotFoundError(SemanticDbError):
+    def __init__(self, collection: str, record_id: int) -> None:
+        super().__init__(f"record {record_id} not found in collection '{collection}'")
+        self.collection = collection
+        self.record_id = record_id

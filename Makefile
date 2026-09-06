@@ -1,4 +1,4 @@
-.PHONY: up down migrate revision check lint types arch unit test-integration
+.PHONY: up down migrate revision check lint lint-fix types arch unit test-integration
 
 up:
 	docker compose up -d --wait
@@ -17,6 +17,10 @@ check: lint types arch unit
 lint:
 	uv run ruff check src tests
 	uv run ruff format --check src tests
+
+lint-fix:
+	uv run ruff check --fix src tests
+	uv run ruff format src tests
 
 types:
 	uv run mypy

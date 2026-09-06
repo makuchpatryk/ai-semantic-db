@@ -372,8 +372,9 @@ class RecordRepository(Protocol):
     async def add(self, collection_id: int, record: Record, vec: list[float]) -> Record: ...
     async def search(self, collection_id: int, vec: list[float], k: int) -> list[ScoredRecord]: ...
     async def embedding_models(self, collection_id: int) -> frozenset[str]: ...   # added as built
-    async def get(self, collection_id: int, record_id: int) -> Record | None: ...       # M6
+    async def get(self, collection_id: int, record_id: int) -> RecordDetail | None: ...  # M6
     async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]: ...  # M6
+    async def count(self, collection_id: int) -> int: ...          # M6, reused by M7
     async def update(self, record: Record, vec: list[float]) -> Record: ...   # M8, atomic re-embed
     async def delete(self, collection_id: int, record_id: int) -> None: ...   # M7
 ```
@@ -442,7 +443,7 @@ Set all five as required status checks in branch protection, otherwise a red PR 
 | M3 | `OllamaEmbeddingProvider`, renderer, `record add` (flags), embed on save | A record is stored with its vector | **done** |
 | M4 | Interactive `record add` with schema-driven prompts and the add-another loop | 30+ records entered by hand without pain | **done** |
 | M5 | `search` with cosine top-k, Rich output, `--explain` | Query returns relevant records | **done** |
-| M6 | `collection list/show`, `record list/show` via `queries.py` | Corpus inspectable without `psql` | open — `Queries` exists with `get_collection` only |
+| M6 | `collection list/show`, `record list/show` via `queries.py` | Corpus inspectable without `psql` | **done** — `Queries` façade extended with four methods, Rich table rendering, 12 new tests |
 | M7 | `collection delete` (cascade + typed confirm), `record delete` | Destructive paths covered by integration tests | open |
 | M8 | `record edit` (re-render + re-embed atomically) | Payload, rendered text, and vector never diverge | open |
 | M9 | `collection edit` — additive and `embed`-toggle only, with full re-embed | Rejected changes fail with a clear reason | open |
@@ -489,7 +490,7 @@ Ordered by what each one buys, not by effort.
 | # | Risk | Mitigation |
 |---|---|---|
 | R1 | Schema abstraction only works for the demo domain | **Closed** — `books` passed the second-collection test (§12) |
-| R2 | Hand entry too tedious to reach a useful corpus | Add-another loop, prefilled defaults, flag path for scripted seeding; bulk ingest is first on the roadmap if it bites. `scripts/seed_products.sh` exists but **is written against a `--field name type --embed` syntax that was never built** — it needs rewriting to the `--field "name:type:flags"` grammar of §4.2 before it runs |
+| R2 | Hand entry too tedious to reach a useful corpus | **Closed** — Add-another loop, prefilled defaults, flag path all working. `scripts/seed_products.sh` rewritten to the `--field "name:type:flags"` grammar (§4.2) and runs successfully. |
 | R3 | Embedding on save feels slow | ~400ms is tolerable; if not, queue and embed on a background pass |
 | R4 | Clean Architecture becomes ceremony at this size | One use case per command; no port without a second implementation or a test that needs the seam |
 | R5a | `collection edit` re-embeds the whole corpus on an `embed` toggle | Progress bar, cost stated before starting, `--yes` for scripts; corpus is small by design |

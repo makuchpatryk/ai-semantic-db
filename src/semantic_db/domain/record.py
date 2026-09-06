@@ -23,3 +23,11 @@ class ScoredRecord:
 
     record: Record
     distance: float
+
+
+@dataclass(frozen=True)
+class RecordDetail:
+    """A record together with the embedding model it was written with. Read-side only."""
+
+    record: Record
+    model: str | None

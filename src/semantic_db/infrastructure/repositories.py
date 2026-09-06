@@ -1,8 +1,8 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from semantic_db.domain.collection import Collection, CollectionSchema
+from semantic_db.domain.collection import Collection, CollectionSchema, CollectionSummary
 from semantic_db.domain.errors import DuplicateCollectionError
-from semantic_db.domain.record import Record, ScoredRecord
+from semantic_db.domain.record import Record, RecordDetail, ScoredRecord
 from semantic_db.infrastructure.db.models import CollectionModel, EmbeddingModel, RecordModel
 from semantic_db.infrastructure.db.session_types import SessionFactory
 from semantic_db.infrastructure.mappers import (
@@ -36,6 +36,31 @@ class SqlCollectionRepository:
                 select(CollectionModel).where(CollectionModel.name == name)
             )
             return collection_from_model(model) if model is not None else None
+
+    async def list(self) -> list[CollectionSummary]:
+        async with self._session_factory() as session:
+            stmt = (
+                select(
+                    CollectionModel.name,
+                    CollectionModel.schema,
+                    func.count(RecordModel.id).label("record_count"),
+                )
+                .outerjoin(RecordModel, RecordModel.collection_id == CollectionModel.id)
+                .group_by(CollectionModel.id, CollectionModel.name, CollectionModel.schema)
+                .order_by(CollectionModel.name)
+            )
+            rows = await session.execute(stmt)
+            results = []
+            for row in rows:
+                row_dict = dict(row._mapping)
+                schema = CollectionSchema.model_validate(row_dict["schema"])
+                summary = CollectionSummary(
+                    name=row_dict["name"],
+                    field_count=len(schema.fields),
+                    record_count=int(row_dict["record_count"]),
+                )
+                results.append(summary)
+            return results
 
 
 class SqlRecordRepository:
@@ -99,3 +124,72 @@ class SqlRecordRepository:
             )
             rows = await session.execute(stmt)
             return frozenset(str(row[0]) for row in rows if row[0] is not None)
+
+    async def get(self, collection_id: int, record_id: int) -> RecordDetail | None:
+        async with self._session_factory() as session:
+            stmt = (
+                select(
+                    RecordModel.id,
+                    RecordModel.collection_id,
+                    RecordModel.payload,
+                    RecordModel.rendered,
+                    CollectionModel.schema,
+                    EmbeddingModel.model,
+                )
+                .join(CollectionModel, CollectionModel.id == RecordModel.collection_id)
+                .outerjoin(EmbeddingModel, EmbeddingModel.record_id == RecordModel.id)
+                .where(RecordModel.collection_id == collection_id)
+                .where(RecordModel.id == record_id)
+            )
+            row = await session.execute(stmt)
+            result = row.first()
+            if result is None:
+                return None
+
+            row_dict = dict(result._mapping)
+            schema = CollectionSchema.model_validate(row_dict["schema"])
+            record = Record(
+                id=row_dict["id"],
+                collection_id=row_dict["collection_id"],
+                payload=payload_from_jsonb(schema, row_dict["payload"]),
+                rendered=row_dict["rendered"],
+            )
+            return RecordDetail(record=record, model=row_dict["model"])
+
+    async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]:
+        async with self._session_factory() as session:
+            stmt = (
+                select(
+                    RecordModel.id,
+                    RecordModel.collection_id,
+                    RecordModel.payload,
+                    RecordModel.rendered,
+                    CollectionModel.schema,
+                )
+                .join(CollectionModel, CollectionModel.id == RecordModel.collection_id)
+                .where(RecordModel.collection_id == collection_id)
+                .order_by(RecordModel.id)
+                .limit(limit)
+                .offset(offset)
+            )
+            rows = await session.execute(stmt)
+            results = []
+            for row in rows:
+                row_dict = dict(row._mapping)
+                schema = CollectionSchema.model_validate(row_dict["schema"])
+                record = Record(
+                    id=row_dict["id"],
+                    collection_id=row_dict["collection_id"],
+                    payload=payload_from_jsonb(schema, row_dict["payload"]),
+                    rendered=row_dict["rendered"],
+                )
+                results.append(record)
+            return results
+
+    async def count(self, collection_id: int) -> int:
+        async with self._session_factory() as session:
+            stmt = select(func.count(RecordModel.id)).where(
+                RecordModel.collection_id == collection_id
+            )
+            result = await session.scalar(stmt)
+            return int(result) if result is not None else 0

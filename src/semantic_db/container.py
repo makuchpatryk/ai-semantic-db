@@ -42,7 +42,7 @@ async def build_container(settings: Settings | None = None) -> AsyncIterator[Con
             create_collection=CreateCollection(collections),
             add_record=AddRecord(collections, records, embedder),
             search_records=SearchRecords(collections, records, embedder),
-            queries=Queries(collections),
+            queries=Queries(collections, records),
             embedding_model=settings.embedding_model,
         )
     finally:
