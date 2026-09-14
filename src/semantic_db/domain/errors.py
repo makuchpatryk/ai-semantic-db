@@ -71,3 +71,10 @@ class RecordNotFoundError(SemanticDbError):
         super().__init__(f"record {record_id} not found in collection '{collection}'")
         self.collection = collection
         self.record_id = record_id
+
+
+class UnsupportedSchemaChangeError(SemanticDbError):
+    """A schema change v1 deliberately rejects (PRD 7.3)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{message}; delete and recreate the collection instead")

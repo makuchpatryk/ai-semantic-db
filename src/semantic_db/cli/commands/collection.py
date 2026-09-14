@@ -1,16 +1,21 @@
+from time import perf_counter
 from typing import Annotated
 
 import click
 import typer
+from rich.progress import Progress
 from rich.table import Table
 
 from semantic_db.application.use_cases.create_collection import CreateCollectionCommand
 from semantic_db.application.use_cases.delete_collection import DeleteCollectionCommand
-from semantic_db.cli.field_spec import parse_field_spec
+from semantic_db.application.use_cases.edit_collection import EditCollectionCommand
+from semantic_db.cli.field_spec import parse_enum_add_specs, parse_field_spec
 from semantic_db.cli.prompts import PromptAborted, confirm, prompt_field_definitions
 from semantic_db.cli.render_preview import print_schema_preview
 from semantic_db.cli.runner import console, error_console, guard, run
 from semantic_db.domain.collection import CollectionSchema, FieldDefinition
+from semantic_db.domain.errors import SemanticDbError
+from semantic_db.settings import get_settings
 
 collection_app = typer.Typer(no_args_is_help=True, help="Define and inspect collections.")
 
@@ -18,6 +23,12 @@ FIELD_HELP = (
     "Field spec, repeatable: name:type[:flags][:key=value] "
     "(e.g. 'price:float:embed:unit=PLN'). Given at least once, the wizard is skipped."
 )
+
+ADD_FIELD_HELP = (
+    "Field spec, repeatable, same grammar as --field (e.g. 'notes:text'). "
+    "Only optional fields may be added."
+)
+ENUM_ADD_HELP = "Enum value to add, repeatable: field=value (e.g. 'category=drills')."
 
 
 @collection_app.command("create")
@@ -128,3 +139,76 @@ def delete_cmd(
     cmd = DeleteCollectionCommand(name=name)
     run(lambda container: container.delete_collection.execute(cmd))
     console.print("[green]✓[/] deleted")
+
+
+@collection_app.command("edit")
+def edit_cmd(
+    name: Annotated[str, typer.Argument(help="Collection name")],
+    rename: Annotated[str | None, typer.Option("--rename", help="New collection name")] = None,
+    add_field: Annotated[list[str] | None, typer.Option("--add-field", help=ADD_FIELD_HELP)] = None,
+    embed: Annotated[
+        list[str] | None, typer.Option("--embed", help="Field to turn embedding on for")
+    ] = None,
+    no_embed: Annotated[
+        list[str] | None, typer.Option("--no-embed", help="Field to turn embedding off for")
+    ] = None,
+    enum_add: Annotated[list[str] | None, typer.Option("--enum-add", help=ENUM_ADD_HELP)] = None,
+    yes: Annotated[bool, typer.Option("--yes", help="Skip confirmation")] = False,
+) -> None:
+    """Rename a collection, add an optional field, toggle embed on a field, or add enum
+    values. Rejects removing a field, adding a required field, changing a type, or
+    removing an enum value — delete and recreate the collection for those."""
+    with guard():
+        if not (rename or add_field or embed or no_embed or enum_add):
+            raise SemanticDbError(
+                "no changes given; use --rename, --add-field, --embed, --no-embed or --enum-add"
+            )
+
+        embed_on = frozenset(embed or [])
+        embed_off = frozenset(no_embed or [])
+        collision = sorted(embed_on & embed_off)
+        if collision:
+            raise SemanticDbError(
+                f"field(s) {', '.join(collision)} given to both --embed and --no-embed"
+            )
+
+        add_fields = [parse_field_spec(spec) for spec in add_field or []]
+        enum_additions = parse_enum_add_specs(enum_add) if enum_add else {}
+
+    cmd = EditCollectionCommand(
+        name=name,
+        rename_to=rename,
+        add_fields=add_fields,
+        embed_on=embed_on,
+        embed_off=embed_off,
+        enum_additions=enum_additions,
+    )
+
+    if not (add_field or embed or no_embed):
+        result = run(lambda container: container.edit_collection.execute(cmd))
+        console.print(f"[green]✓[/] updated collection '{result.collection.name}'")
+        return
+
+    _, record_count = run(lambda c: c.queries.collection_stats(name))
+    if not yes and not typer.confirm(
+        f"This changes collection '{name}': {record_count} records will be "
+        "re-rendered and re-embedded. Continue?"
+    ):
+        error_console.print("Aborted.")
+        raise typer.Exit(1)
+
+    started = perf_counter()
+    with Progress(console=console) as progress:
+        task = progress.add_task("Re-embedding", total=None)
+
+        def on_progress(done_batches: int, total_batches: int) -> None:
+            progress.update(task, completed=done_batches, total=total_batches)
+
+        result = run(lambda container: container.edit_collection.execute(cmd, on_progress))
+    elapsed_ms = int((perf_counter() - started) * 1000)
+
+    console.print(
+        f"[green]✓[/] updated collection '{result.collection.name}', "
+        f"re-embedded {result.reembedded_count} records "
+        f"with {get_settings().embedding_model} ({elapsed_ms}ms)"
+    )

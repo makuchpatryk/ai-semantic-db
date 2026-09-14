@@ -658,3 +658,151 @@ async def test_record_edit_wizard_prefills_with_current_values(
         assert record is not None
         assert record.payload["title"] == "Pump A (rev 2)"
         assert record.payload["category"] == "pumps"  # untouched default survives
+
+
+async def test_collection_edit_rename_moves_the_collection_and_its_records(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+
+    result = await invoke(["collection", "edit", "products", "--rename", "parts"])
+    assert result.exit_code == 0, result.output
+
+    shown = await invoke(["collection", "show", "parts"])
+    assert shown.exit_code == 0, shown.output
+
+    gone = await invoke(["collection", "show", "products"])
+    assert gone.exit_code == 2
+
+
+async def test_collection_edit_add_field_leaves_existing_rendered_text_byte_identical(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+
+    async with session_factory() as session:
+        before = await session.scalar(select(RecordModel))
+        assert before is not None
+        rendered_before = before.rendered
+
+    result = await invoke(["collection", "edit", "products", "--add-field", "notes:text", "--yes"])
+    assert result.exit_code == 0, result.output
+
+    shown = await invoke(["collection", "show", "products"])
+    assert "notes" in shown.stdout
+
+    async with session_factory() as session:
+        after = await session.scalar(select(RecordModel))
+        assert after is not None
+        assert after.rendered == rendered_before  # optional field absent, so no text delta
+
+
+async def test_collection_edit_embed_toggle_changes_search_ranking(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "General purpose pump.", "pumps")
+    result = await invoke(
+        [
+            "record",
+            "add",
+            "products",
+            *set_args(
+                {
+                    "title": "Valve B",
+                    "description": "General purpose valve.",
+                    "category": "valves",
+                    "year": "1999",
+                    "price": "10",
+                }
+            ),
+        ]
+    )
+    assert result.exit_code == 0, result.output
+
+    before = await invoke(["search", "products", "1999", "--k", "1"])
+    assert before.exit_code == 0, before.output
+
+    toggled = await invoke(["collection", "edit", "products", "--embed", "year", "--yes"])
+    assert toggled.exit_code == 0, toggled.output
+
+    after = await invoke(["search", "products", "1999", "--k", "1"])
+    assert after.exit_code == 0, after.output
+    assert "Valve B" in after.stdout  # now ranks first: "1999" only appears in its own text
+
+
+async def test_collection_edit_enum_add_allows_the_new_value(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+
+    result = await invoke(["collection", "edit", "products", "--enum-add", "category=drills"])
+    assert result.exit_code == 0, result.output
+
+    added = await invoke(
+        [
+            "record",
+            "add",
+            "products",
+            *set_args({"title": "Drill D", "category": "drills", "year": "2020", "price": "50"}),
+        ]
+    )
+    assert added.exit_code == 0, added.output
+
+
+async def test_collection_edit_rejects_a_required_add_field(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+
+    result = await invoke(
+        ["collection", "edit", "products", "--add-field", "sku:text:required", "--yes"]
+    )
+
+    assert result.exit_code == 2
+    output = (result.stdout + result.stderr).replace("\n", " ")
+    assert "required field 'sku'" in output
+    shown = await invoke(["collection", "show", "products"])
+    assert "sku" not in shown.stdout
+
+
+async def test_collection_edit_confirmation_declined_leaves_the_collection_unchanged(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+
+    result = await invoke(
+        ["collection", "edit", "products", "--add-field", "notes:text"], input="n\n"
+    )
+
+    assert result.exit_code == 1
+    shown = await invoke(["collection", "show", "products"])
+    assert "notes" not in shown.stdout
+
+
+async def test_collection_edit_confirmed_with_y_applies_the_change(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+
+    result = await invoke(
+        ["collection", "edit", "products", "--add-field", "notes:text"], input="y\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    shown = await invoke(["collection", "show", "products"])
+    assert "notes" in shown.stdout
+
+
+async def test_collection_edit_yes_skips_the_prompt(session_factory: SessionFactory) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+
+    result = await invoke(["collection", "edit", "products", "--add-field", "notes:text", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "records will be re-rendered" not in result.output

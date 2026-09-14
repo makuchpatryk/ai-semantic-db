@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy import select
 
-from semantic_db.domain.collection import Collection
+from semantic_db.domain.collection import Collection, CollectionSchema
 from semantic_db.domain.errors import DuplicateCollectionError
 from semantic_db.domain.record import Payload, Record
 from semantic_db.domain.rendering import render
@@ -204,3 +204,73 @@ async def test_embedding_models_is_empty_for_a_collection_without_records(
 
     records = SqlRecordRepository(session_factory, "bge-m3")
     assert await records.embedding_models(collection.id) == frozenset()
+
+
+async def test_collection_update_renames_and_changes_the_schema(
+    session_factory: SessionFactory,
+) -> None:
+    collections = SqlCollectionRepository(session_factory)
+    collection = await collections.create(Collection(name="products", schema=PRODUCTS))
+    assert collection.id is not None
+    renamed_field = PRODUCTS.fields[0].model_copy(update={"embed": False})
+    new_schema = CollectionSchema(fields=(renamed_field, *PRODUCTS.fields[1:]))
+
+    await collections.update(Collection(id=collection.id, name="parts", schema=new_schema))
+
+    assert await collections.get("products") is None
+    loaded = await collections.get("parts")
+    assert loaded is not None
+    assert loaded.schema == new_schema
+
+
+async def test_collection_update_rename_collision_is_rejected(
+    session_factory: SessionFactory,
+) -> None:
+    collections = SqlCollectionRepository(session_factory)
+    collection = await collections.create(Collection(name="products", schema=PRODUCTS))
+    assert collection.id is not None
+    await collections.create(Collection(name="books", schema=BOOKS))
+
+    with pytest.raises(DuplicateCollectionError):
+        await collections.update(Collection(id=collection.id, name="books", schema=PRODUCTS))
+
+
+async def test_record_update_all_writes_every_row_in_one_call(
+    session_factory: SessionFactory,
+) -> None:
+    collections = SqlCollectionRepository(session_factory)
+    collection = await collections.create(Collection(name="products", schema=PRODUCTS))
+    assert collection.id is not None
+    records = SqlRecordRepository(session_factory, "bge-m3")
+
+    stored = []
+    for title in ("A", "B", "C"):
+        payload: Payload = {"title": title, "category": "pumps", "year": 2019, "price": 1.0}
+        stored.append(
+            await records.add(
+                collection.id, Record(collection.id, payload, render(PRODUCTS, payload)), VECTOR
+            )
+        )
+
+    new_vector = [0.02] * 1024
+    updates = [
+        (
+            Record(
+                id=record.id,
+                collection_id=collection.id,
+                payload=record.payload,
+                rendered=f"{record.rendered}-updated",
+            ),
+            new_vector,
+        )
+        for record in stored
+    ]
+
+    await records.update_all(updates)
+
+    async with session_factory() as session:
+        rows = (await session.scalars(select(RecordModel).order_by(RecordModel.id))).all()
+        assert [row.rendered for row in rows] == [f"{r.rendered}-updated" for r in stored]
+        embeddings = (await session.scalars(select(EmbeddingModel))).all()
+        for embedding in embeddings:
+            assert list(embedding.vec) == pytest.approx(new_vector, abs=1e-4)

@@ -1,6 +1,6 @@
 import pytest
 
-from semantic_db.cli.field_spec import parse_field_spec
+from semantic_db.cli.field_spec import parse_enum_add_specs, parse_field_spec
 from semantic_db.cli.set_spec import parse_set_specs, parse_unset_specs
 from semantic_db.domain.errors import SchemaError, SemanticDbError
 from semantic_db.domain.field_types import FieldType
@@ -93,3 +93,22 @@ def test_unset_rejects_a_blank_field() -> None:
 def test_unset_rejects_a_duplicate_field() -> None:
     with pytest.raises(SemanticDbError, match="given twice"):
         parse_unset_specs(["title", "title"])
+
+
+def test_enum_add_groups_repeated_fields_into_one_tuple() -> None:
+    assert parse_enum_add_specs(["category=drills", "category=saws"]) == {
+        "category": ("drills", "saws")
+    }
+
+
+def test_enum_add_keeps_distinct_fields_separate() -> None:
+    assert parse_enum_add_specs(["category=drills", "material=steel"]) == {
+        "category": ("drills",),
+        "material": ("steel",),
+    }
+
+
+@pytest.mark.parametrize("spec", ["category", "=drills", "category=", " = "])
+def test_enum_add_rejects_a_blank_field_or_value(spec: str) -> None:
+    with pytest.raises(SchemaError, match="expected field=value"):
+        parse_enum_add_specs([spec])

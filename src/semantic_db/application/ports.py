@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Protocol
 
 from semantic_db.domain.collection import Collection, CollectionSummary
@@ -24,6 +25,8 @@ class CollectionRepository(Protocol):
 
     async def delete(self, name: str) -> None: ...  # M7
 
+    async def update(self, collection: Collection) -> Collection: ...  # M9
+
 
 class RecordRepository(Protocol):
     async def add(self, collection_id: int, record: Record, vec: list[float]) -> Record: ...
@@ -35,6 +38,8 @@ class RecordRepository(Protocol):
     async def get(self, collection_id: int, record_id: int) -> RecordDetail | None: ...  # M6
 
     async def update(self, record: Record, vec: list[float] | None) -> Record: ...  # M8
+
+    async def update_all(self, updates: Sequence[tuple[Record, list[float]]]) -> None: ...  # M9
 
     # NOTE: methods below define `list`, which shadows the builtin `list` for eagerly
     # evaluated annotations in the rest of this class body — nothing after this point may

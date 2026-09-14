@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from sqlalchemy import delete, func, select
 from sqlalchemy import update as sa_update
 
@@ -69,6 +71,23 @@ class SqlCollectionRepository:
         async with self._session_factory() as session, session.begin():
             stmt = delete(CollectionModel).where(CollectionModel.name == name)
             await session.execute(stmt)
+
+    async def update(self, collection: Collection) -> Collection:
+        async with self._session_factory() as session, session.begin():
+            try:
+                await session.execute(
+                    sa_update(CollectionModel)
+                    .where(CollectionModel.id == collection.id)
+                    .values(
+                        name=collection.name,
+                        schema=collection.schema.model_dump(mode="json"),
+                    )
+                )
+            except Exception as exc:  # unique violation is the only expected failure here
+                if "collections_name_key" in str(exc):
+                    raise DuplicateCollectionError(collection.name) from exc
+                raise
+            return collection
 
 
 class SqlRecordRepository:
@@ -183,6 +202,21 @@ class SqlRecordRepository:
                     .values(model=self._model_name, vec=vec)
                 )
             return record
+
+    async def update_all(self, updates: Sequence[tuple[Record, list[float]]]) -> None:
+        """Bulk re-render/re-embed write, one transaction, all rows or none (PRD M9)."""
+        async with self._session_factory() as session, session.begin():
+            for record, vec in updates:
+                await session.execute(
+                    sa_update(RecordModel)
+                    .where(RecordModel.id == record.id)
+                    .values(payload=payload_to_jsonb(record.payload), rendered=record.rendered)
+                )
+                await session.execute(
+                    sa_update(EmbeddingModel)
+                    .where(EmbeddingModel.record_id == record.id)
+                    .values(model=self._model_name, vec=vec)
+                )
 
     # NOTE: `list` below shadows the builtin `list` for eagerly evaluated annotations in
     # the rest of this class body — nothing after this point may spell out `list[...]`.

@@ -34,6 +34,23 @@ def parse_field_spec(spec: str) -> FieldDefinition:
     )
 
 
+def parse_enum_add_specs(specs: list[str]) -> dict[str, tuple[str, ...]]:
+    """Parse repeated `--enum-add field=value`, grouping repeated fields into one tuple.
+
+    Unlike `parse_set_specs`, a repeated key is expected — it's how more than one value is
+    added to the same field in one call.
+    """
+    grouped: dict[str, list[str]] = {}
+    for spec in specs:
+        field, separator, value = spec.partition("=")
+        field = field.strip()
+        value = value.strip()
+        if not separator or not field or not value:
+            raise SchemaError(f"invalid --enum-add '{spec}'; expected field=value")
+        grouped.setdefault(field, []).append(value)
+    return {field: tuple(values) for field, values in grouped.items()}
+
+
 def _parse_type(text: str, spec: str) -> tuple[FieldType, tuple[str, ...] | None]:
     match = ENUM_RE.match(text)
     if match:

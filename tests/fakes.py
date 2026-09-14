@@ -1,7 +1,8 @@
+from collections.abc import Sequence
 from hashlib import sha256
 
 from semantic_db.domain.collection import Collection, CollectionSummary
-from semantic_db.domain.errors import DuplicateCollectionError
+from semantic_db.domain.errors import DuplicateCollectionError, EmbeddingUnavailableError
 from semantic_db.domain.record import Record, RecordDetail, ScoredRecord
 
 
@@ -24,6 +25,18 @@ class InMemoryCollectionRepository:
 
     async def delete(self, name: str) -> None:
         self.collections.pop(name, None)
+
+    async def update(self, collection: Collection) -> Collection:
+        current_name = next(
+            (name for name, stored in self.collections.items() if stored.id == collection.id),
+            None,
+        )
+        if current_name is not None and current_name != collection.name:
+            if collection.name in self.collections:
+                raise DuplicateCollectionError(collection.name)
+            del self.collections[current_name]
+        self.collections[collection.name] = collection
+        return collection
 
     async def list(self) -> list[CollectionSummary]:
         summaries = []
@@ -97,6 +110,10 @@ class InMemoryRecordRepository:
                 return record
         raise AssertionError("update called for a record the fake doesn't have")
 
+    async def update_all(self, updates: Sequence[tuple[Record, list[float]]]) -> None:
+        for record, vec in updates:
+            await self.update(record, vec)
+
     # NOTE: `list` below shadows the builtin `list` for eagerly evaluated annotations in
     # the rest of this class body — nothing after this point may spell out `list[...]`.
     async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]:
@@ -137,6 +154,21 @@ class BrokenEmbeddingProvider(FakeEmbeddingProvider):
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] * (self.dim - 1) for _ in texts]
+
+
+class FailingAfterNCallsEmbeddingProvider(FakeEmbeddingProvider):
+    """Succeeds on the first `succeed_calls` calls to `embed`, then raises — simulates
+    Ollama going down partway through a bulk re-embed pass."""
+
+    def __init__(self, succeed_calls: int, model_name: str = "fake-model", dim: int = 1024) -> None:
+        super().__init__(model_name, dim)
+        self._succeed_calls = succeed_calls
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        if len(self.calls) >= self._succeed_calls:
+            self.calls.append(texts)
+            raise EmbeddingUnavailableError("Ollama unreachable mid-batch")
+        return await super().embed(texts)
 
 
 def _cosine_distance(a: list[float], b: list[float]) -> float:

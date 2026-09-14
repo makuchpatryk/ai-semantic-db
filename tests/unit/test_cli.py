@@ -73,3 +73,32 @@ def test_record_edit_rejects_a_field_given_to_both_set_and_unset() -> None:
     )
     assert result.exit_code == VALIDATION_EXIT_CODE
     assert "both --set and --unset" in output_of(result)
+
+
+def test_collection_edit_without_flags_names_the_available_ones() -> None:
+    result = runner.invoke(app, ["collection", "edit", "products"])
+    assert result.exit_code == VALIDATION_EXIT_CODE
+    output = output_of(result)
+    for flag in ("--rename", "--add-field", "--embed", "--no-embed", "--enum-add"):
+        assert flag in output
+
+
+def test_collection_edit_rejects_a_field_given_to_both_embed_and_no_embed() -> None:
+    result = runner.invoke(
+        app,
+        ["collection", "edit", "products", "--embed", "year", "--no-embed", "year"],
+    )
+    assert result.exit_code == VALIDATION_EXIT_CODE
+    assert "both --embed and --no-embed" in output_of(result)
+
+
+def test_collection_edit_bad_add_field_spec_surfaces_the_same_error_as_create() -> None:
+    result = runner.invoke(app, ["collection", "edit", "products", "--add-field", "title:strng"])
+    assert result.exit_code == VALIDATION_EXIT_CODE
+    assert "unknown type 'strng'" in output_of(result)
+
+
+def test_collection_edit_bad_enum_add_spec_is_rejected() -> None:
+    result = runner.invoke(app, ["collection", "edit", "products", "--enum-add", "category"])
+    assert result.exit_code == VALIDATION_EXIT_CODE
+    assert "expected field=value" in output_of(result)

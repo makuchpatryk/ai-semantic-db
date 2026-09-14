@@ -10,8 +10,13 @@ from semantic_db.application.use_cases.delete_collection import (
     DeleteCollectionCommand,
 )
 from semantic_db.application.use_cases.delete_record import DeleteRecord, DeleteRecordCommand
+from semantic_db.application.use_cases.edit_collection import (
+    EditCollection,
+    EditCollectionCommand,
+)
 from semantic_db.application.use_cases.edit_record import EditRecord, EditRecordCommand
 from semantic_db.application.use_cases.search_records import SearchRecords, SearchRecordsCommand
+from semantic_db.domain.collection import FieldDefinition
 from semantic_db.domain.errors import (
     CollectionNotFoundError,
     DuplicateCollectionError,
@@ -21,9 +26,12 @@ from semantic_db.domain.errors import (
     RecordNotFoundError,
     SchemaError,
     UnknownFieldError,
+    UnsupportedSchemaChangeError,
 )
+from semantic_db.domain.field_types import FieldType
 from tests.fakes import (
     BrokenEmbeddingProvider,
+    FailingAfterNCallsEmbeddingProvider,
     FakeEmbeddingProvider,
     InMemoryCollectionRepository,
     InMemoryRecordRepository,
@@ -436,3 +444,168 @@ async def test_search_rejects_a_collection_embedded_with_another_model() -> None
         )
 
     assert switched.calls == []  # the guard runs before the query is embedded
+
+
+async def test_edit_collection_rename_alone_touches_no_records() -> None:
+    collections, records = await _seeded()
+    embedder = FakeEmbeddingProvider()
+    await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("products", PRODUCT_VALUES)
+    )
+    embedder.calls.clear()
+    before = records.records[0]
+
+    result = await EditCollection(collections, records, embedder).execute(
+        EditCollectionCommand("products", rename_to="parts")
+    )
+
+    assert result.collection.name == "parts"
+    assert result.collection.schema == PRODUCTS
+    assert result.reembedded_count == 0
+    assert await collections.get("products") is None
+    assert await collections.get("parts") is not None
+    assert records.records[0] == before  # untouched
+    assert embedder.calls == []
+
+
+async def test_edit_collection_rejects_a_required_add_field() -> None:
+    collections, records = await _seeded()
+    use_case = EditCollection(collections, records, FakeEmbeddingProvider())
+    required_field = FieldDefinition(name="sku", type=FieldType.TEXT, required=True)
+
+    with pytest.raises(UnsupportedSchemaChangeError, match="sku"):
+        await use_case.execute(EditCollectionCommand("products", add_fields=[required_field]))
+
+    assert collections.collections["products"].schema == PRODUCTS
+
+
+async def test_edit_collection_optional_add_field_reembeds_every_existing_record() -> None:
+    collections, records = await _seeded()
+    embedder = FakeEmbeddingProvider()
+    add = AddRecord(collections, records, embedder)
+    await add.execute(AddRecordCommand("products", PRODUCT_VALUES))
+    await add.execute(AddRecordCommand("products", {**PRODUCT_VALUES, "title": "Other"}))
+    embedder.calls.clear()
+    new_field = FieldDefinition(name="notes", type=FieldType.TEXT)
+
+    result = await EditCollection(collections, records, embedder).execute(
+        EditCollectionCommand("products", add_fields=[new_field])
+    )
+
+    assert result.reembedded_count == 2
+    assert len(embedder.calls) == 1  # one batch, under REEMBED_BATCH_SIZE
+    assert len(embedder.calls[0]) == 2
+    assert "notes" in [f.name for f in result.collection.schema.fields]
+
+
+async def test_edit_collection_embed_toggle_on_unknown_field_raises() -> None:
+    collections, records = await _seeded()
+    use_case = EditCollection(collections, records, FakeEmbeddingProvider())
+
+    with pytest.raises(UnknownFieldError):
+        await use_case.execute(EditCollectionCommand("products", embed_on=frozenset({"weight"})))
+
+
+async def test_edit_collection_embed_off_wins_when_a_field_is_in_both_sets() -> None:
+    """The CLI never lets `--embed`/`--no-embed` collide on one field, but the use case
+    still needs a defined answer if a caller constructs overlapping sets directly."""
+    collections, records = await _seeded()
+
+    result = await EditCollection(collections, records, FakeEmbeddingProvider()).execute(
+        EditCollectionCommand(
+            "products", embed_on=frozenset({"year"}), embed_off=frozenset({"year"})
+        )
+    )
+
+    year_field = result.collection.schema.field("year")
+    assert year_field is not None
+    assert year_field.embed is False
+
+
+async def test_edit_collection_enum_add_on_a_non_enum_field_raises() -> None:
+    collections, records = await _seeded()
+    use_case = EditCollection(collections, records, FakeEmbeddingProvider())
+
+    with pytest.raises(SchemaError, match="not an enum"):
+        await use_case.execute(EditCollectionCommand("products", enum_additions={"year": ("x",)}))
+
+
+async def test_edit_collection_enum_add_appends_without_reembedding() -> None:
+    collections, records = await _seeded()
+    embedder = FakeEmbeddingProvider()
+    await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("products", PRODUCT_VALUES)
+    )
+    embedder.calls.clear()
+
+    result = await EditCollection(collections, records, embedder).execute(
+        EditCollectionCommand("products", enum_additions={"category": ("drills",)})
+    )
+
+    category_field = result.collection.schema.field("category")
+    assert category_field is not None
+    assert category_field.enum_values == ("pumps", "motors", "valves", "sensors", "drills")
+    assert result.reembedded_count == 0
+    assert embedder.calls == []
+
+
+async def test_edit_collection_enum_add_of_an_existing_value_raises() -> None:
+    collections, records = await _seeded()
+    use_case = EditCollection(collections, records, FakeEmbeddingProvider())
+
+    with pytest.raises(SchemaError, match="duplicate enum values"):
+        await use_case.execute(
+            EditCollectionCommand("products", enum_additions={"category": ("pumps",)})
+        )
+
+
+async def test_edit_collection_embedder_failure_mid_batch_writes_nothing() -> None:
+    collections, records = await _seeded()
+    seed_embedder = FakeEmbeddingProvider()
+    add = AddRecord(collections, records, seed_embedder)
+    for title in ("A", "B", "C"):
+        await add.execute(AddRecordCommand("products", {**PRODUCT_VALUES, "title": title}))
+    before = list(records.records)
+    before_vectors = list(records.vectors)
+    failing = FailingAfterNCallsEmbeddingProvider(succeed_calls=0)
+    new_field = FieldDefinition(name="notes", type=FieldType.TEXT)
+
+    with pytest.raises(EmbeddingUnavailableError):
+        await EditCollection(collections, records, failing).execute(
+            EditCollectionCommand("products", add_fields=[new_field])
+        )
+
+    assert records.records == before
+    assert records.vectors == before_vectors
+    assert collections.collections["products"].schema == PRODUCTS
+
+
+async def test_edit_collection_add_field_on_an_empty_collection_still_updates_the_schema() -> None:
+    collections, records = await _seeded()
+    new_field = FieldDefinition(name="notes", type=FieldType.TEXT)
+
+    result = await EditCollection(collections, records, FakeEmbeddingProvider()).execute(
+        EditCollectionCommand("products", add_fields=[new_field])
+    )
+
+    assert result.reembedded_count == 0
+    assert "notes" in [f.name for f in result.collection.schema.fields]
+
+
+async def test_edit_collection_rejects_an_unknown_collection() -> None:
+    _, records = await _seeded()
+    use_case = EditCollection(InMemoryCollectionRepository(), records, FakeEmbeddingProvider())
+
+    with pytest.raises(CollectionNotFoundError):
+        await use_case.execute(EditCollectionCommand("ghosts", rename_to="parts"))
+
+
+async def test_edit_collection_rename_collision_raises() -> None:
+    collections, records = await _seeded()
+    await CreateCollection(collections).execute(
+        CreateCollectionCommand(name="books", fields=BOOKS.fields)
+    )
+    use_case = EditCollection(collections, records, FakeEmbeddingProvider())
+
+    with pytest.raises(DuplicateCollectionError):
+        await use_case.execute(EditCollectionCommand("products", rename_to="books"))
