@@ -10,6 +10,7 @@ from semantic_db.application.use_cases.delete_collection import (
     DeleteCollectionCommand,
 )
 from semantic_db.application.use_cases.delete_record import DeleteRecord, DeleteRecordCommand
+from semantic_db.application.use_cases.edit_record import EditRecord, EditRecordCommand
 from semantic_db.application.use_cases.search_records import SearchRecords, SearchRecordsCommand
 from semantic_db.domain.errors import (
     CollectionNotFoundError,
@@ -19,6 +20,7 @@ from semantic_db.domain.errors import (
     MissingRequiredFieldError,
     RecordNotFoundError,
     SchemaError,
+    UnknownFieldError,
 )
 from tests.fakes import (
     BrokenEmbeddingProvider,
@@ -26,7 +28,7 @@ from tests.fakes import (
     InMemoryCollectionRepository,
     InMemoryRecordRepository,
 )
-from tests.schemas import PRODUCTS
+from tests.schemas import BOOKS, PRODUCTS
 
 PRODUCT_VALUES = {
     "title": "Hydraulic pump HP-400",
@@ -145,6 +147,185 @@ async def test_delete_record_rejects_an_unknown_record_id() -> None:
 
     with pytest.raises(RecordNotFoundError):
         await use_case.execute(DeleteRecordCommand("products", 999))
+
+
+async def _seeded_books() -> tuple[InMemoryCollectionRepository, InMemoryRecordRepository]:
+    collections = InMemoryCollectionRepository()
+    await CreateCollection(collections).execute(
+        CreateCollectionCommand(name="books", fields=BOOKS.fields)
+    )
+    return collections, InMemoryRecordRepository()
+
+
+BOOK_VALUES = {
+    "author": "Stanisław Lem",
+    "published": "1961-05-04",
+    "genres": "sci-fi, philosophy",
+    "in_print": "y",
+    "shelf_code": "A-12",
+}
+
+
+async def test_edit_record_merges_set_onto_the_existing_payload() -> None:
+    collections, records = await _seeded()
+    embedder = FakeEmbeddingProvider()
+    added = await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("products", PRODUCT_VALUES)
+    )
+    assert added.id is not None
+
+    result = await EditRecord(collections, records, embedder).execute(
+        EditRecordCommand("products", added.id, {"price": "4300"}, frozenset())
+    )
+
+    assert result.record.payload["price"] == 4300.0
+    assert result.record.payload["title"] == "Hydraulic pump HP-400"  # untouched fields survive
+
+
+async def test_edit_record_unset_removes_an_optional_field() -> None:
+    collections, records = await _seeded_books()
+    embedder = FakeEmbeddingProvider()
+    added = await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("books", BOOK_VALUES)
+    )
+    assert added.id is not None
+
+    result = await EditRecord(collections, records, embedder).execute(
+        EditRecordCommand("books", added.id, {}, frozenset({"genres"}))
+    )
+
+    assert "genres" not in result.record.payload
+    assert "Genres" not in result.record.rendered
+
+
+async def test_edit_record_unset_on_a_required_field_raises() -> None:
+    collections, records = await _seeded_books()
+    embedder = FakeEmbeddingProvider()
+    added = await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("books", BOOK_VALUES)
+    )
+    assert added.id is not None
+
+    with pytest.raises(MissingRequiredFieldError):
+        await EditRecord(collections, records, embedder).execute(
+            EditRecordCommand("books", added.id, {}, frozenset({"author"}))
+        )
+
+
+async def test_edit_record_rejects_an_unknown_field_in_set() -> None:
+    collections, records = await _seeded()
+    embedder = FakeEmbeddingProvider()
+    added = await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("products", PRODUCT_VALUES)
+    )
+    assert added.id is not None
+
+    with pytest.raises(UnknownFieldError):
+        await EditRecord(collections, records, embedder).execute(
+            EditRecordCommand("products", added.id, {"weight": "10"}, frozenset())
+        )
+
+
+async def test_edit_record_rejects_an_unknown_field_in_unset() -> None:
+    collections, records = await _seeded()
+    embedder = FakeEmbeddingProvider()
+    added = await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("products", PRODUCT_VALUES)
+    )
+    assert added.id is not None
+
+    with pytest.raises(UnknownFieldError):
+        await EditRecord(collections, records, embedder).execute(
+            EditRecordCommand("products", added.id, {}, frozenset({"weight"}))
+        )
+
+
+async def test_edit_record_editing_only_a_non_embed_field_skips_reembed() -> None:
+    collections, records = await _seeded_books()
+    embedder = FakeEmbeddingProvider()
+    added = await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("books", BOOK_VALUES)
+    )
+    assert added.id is not None
+    stored_vec = records.vectors[0]
+    embedder.calls.clear()
+
+    result = await EditRecord(collections, records, embedder).execute(
+        EditRecordCommand("books", added.id, {"shelf_code": "B-01"}, frozenset())
+    )
+
+    assert result.reembedded is False
+    assert embedder.calls == []
+    assert records.vectors[0] == stored_vec  # untouched, byte-identical
+
+
+async def test_edit_record_editing_an_embed_field_reembeds_once() -> None:
+    collections, records = await _seeded_books()
+    embedder = FakeEmbeddingProvider()
+    added = await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("books", BOOK_VALUES)
+    )
+    assert added.id is not None
+    embedder.calls.clear()
+
+    result = await EditRecord(collections, records, embedder).execute(
+        EditRecordCommand("books", added.id, {"author": "Stanislaw Lem"}, frozenset())
+    )
+
+    assert result.reembedded is True
+    assert embedder.calls == [[result.record.rendered]]
+    assert records.vectors[0] == embedder._vector(result.record.rendered)
+
+
+async def test_edit_record_coercion_does_not_falsely_trigger_reembed() -> None:
+    """4200 vs 4200.0 must compare equal post-coercion, or an untouched field would
+    look 'changed' and waste an embed call."""
+    collections, records = await _seeded()
+    embedder = FakeEmbeddingProvider()
+    added = await AddRecord(collections, records, embedder).execute(
+        AddRecordCommand("products", PRODUCT_VALUES)
+    )
+    assert added.id is not None
+    embedder.calls.clear()
+
+    result = await EditRecord(collections, records, embedder).execute(
+        EditRecordCommand("products", added.id, {"price": "4200"}, frozenset())
+    )
+
+    assert result.reembedded is False
+    assert embedder.calls == []
+
+
+async def test_edit_record_embedder_failure_writes_nothing() -> None:
+    collections, records = await _seeded_books()
+    added = await AddRecord(collections, records, FakeEmbeddingProvider()).execute(
+        AddRecordCommand("books", BOOK_VALUES)
+    )
+    assert added.id is not None
+    original = records.records[0]
+
+    with pytest.raises(EmbeddingUnavailableError):
+        await EditRecord(collections, records, BrokenEmbeddingProvider()).execute(
+            EditRecordCommand("books", added.id, {"author": "Someone Else"}, frozenset())
+        )
+
+    assert records.records[0] == original  # nothing committed
+
+
+async def test_edit_record_rejects_an_unknown_collection() -> None:
+    _, records = await _seeded()
+    use_case = EditRecord(InMemoryCollectionRepository(), records, FakeEmbeddingProvider())
+
+    with pytest.raises(CollectionNotFoundError):
+        await use_case.execute(EditRecordCommand("products", 1, {"price": "1"}, frozenset()))
+
+
+async def test_edit_record_rejects_an_unknown_record_id() -> None:
+    collections, records = await _seeded()
+    use_case = EditRecord(collections, records, FakeEmbeddingProvider())
+
+    with pytest.raises(RecordNotFoundError):
+        await use_case.execute(EditRecordCommand("products", 999, {"price": "1"}, frozenset()))
 
 
 async def test_delete_collection_removes_it() -> None:

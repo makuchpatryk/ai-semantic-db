@@ -1,7 +1,7 @@
 import pytest
 
 from semantic_db.cli.field_spec import parse_field_spec
-from semantic_db.cli.set_spec import parse_set_specs
+from semantic_db.cli.set_spec import parse_set_specs, parse_unset_specs
 from semantic_db.domain.errors import SchemaError, SemanticDbError
 from semantic_db.domain.field_types import FieldType
 from tests.schemas import PRODUCTS, PRODUCTS_FIELD_SPECS
@@ -79,3 +79,17 @@ def test_set_rejects_malformed_values(spec: str) -> None:
 def test_set_rejects_a_duplicate_key() -> None:
     with pytest.raises(SemanticDbError, match="given twice"):
         parse_set_specs(["title=a", "title=b"])
+
+
+def test_parses_repeated_unset_fields() -> None:
+    assert parse_unset_specs(["description", "year"]) == frozenset({"description", "year"})
+
+
+def test_unset_rejects_a_blank_field() -> None:
+    with pytest.raises(SemanticDbError, match="expected a field name"):
+        parse_unset_specs([" "])
+
+
+def test_unset_rejects_a_duplicate_field() -> None:
+    with pytest.raises(SemanticDbError, match="given twice"):
+        parse_unset_specs(["title", "title"])

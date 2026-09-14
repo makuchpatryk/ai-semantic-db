@@ -88,6 +88,17 @@ class InMemoryRecordRepository:
                 return RecordDetail(record=record, model=self._model_name)
         return None
 
+    async def update(self, record: Record, vec: list[float] | None) -> Record:
+        for index, existing in enumerate(self.records):
+            if existing.collection_id == record.collection_id and existing.id == record.id:
+                self.records[index] = record
+                if vec is not None:
+                    self.vectors[index] = vec
+                return record
+        raise AssertionError("update called for a record the fake doesn't have")
+
+    # NOTE: `list` below shadows the builtin `list` for eagerly evaluated annotations in
+    # the rest of this class body — nothing after this point may spell out `list[...]`.
     async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]:
         filtered = [r for r in self.records if r.collection_id == collection_id]
         filtered.sort(key=lambda r: r.id or 0)

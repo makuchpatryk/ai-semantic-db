@@ -52,3 +52,24 @@ def test_record_add_rejects_a_malformed_set() -> None:
     result = runner.invoke(app, ["record", "add", "products", "--set", "title"])
     assert result.exit_code == VALIDATION_EXIT_CODE
     assert "expected key=value" in output_of(result)
+
+
+def test_record_edit_without_set_or_unset_points_at_the_flags() -> None:
+    result = runner.invoke(app, ["record", "edit", "products", "1"])
+    assert result.exit_code == VALIDATION_EXIT_CODE
+    assert "--set/--unset" in output_of(result)
+
+
+def test_record_edit_rejects_a_malformed_set() -> None:
+    result = runner.invoke(app, ["record", "edit", "products", "1", "--set", "title"])
+    assert result.exit_code == VALIDATION_EXIT_CODE
+    assert "expected key=value" in output_of(result)
+
+
+def test_record_edit_rejects_a_field_given_to_both_set_and_unset() -> None:
+    result = runner.invoke(
+        app,
+        ["record", "edit", "products", "1", "--set", "title=Pump", "--unset", "title"],
+    )
+    assert result.exit_code == VALIDATION_EXIT_CODE
+    assert "both --set and --unset" in output_of(result)

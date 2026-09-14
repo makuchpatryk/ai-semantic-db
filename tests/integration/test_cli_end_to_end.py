@@ -508,3 +508,153 @@ async def test_collection_delete_unknown_name_is_rejected(
     result = await invoke(["collection", "delete", "ghosts", "--yes"])
 
     assert result.exit_code == 2
+
+
+async def test_record_edit_of_an_embedded_field_changes_search_ranking(
+    session_factory: SessionFactory,
+) -> None:
+    """`edit --set` on an embedded field must re-embed, so search ranks the edited record
+    by its NEW text, not the text it was added with (a stale vector would rank it by the
+    old, pump-flavoured text and lose to the untouched valve record)."""
+    await create_products()
+    await add_product("Hydraulic pump HP-400", "Cast-iron housing, rated 400 l/min.", "pumps")
+    record_id = await _added_record_id(session_factory)
+    await add_product("Old rusty valve", "Reclaimed from a demolition site.", "valves")
+
+    result = await invoke(
+        [
+            "record",
+            "edit",
+            "products",
+            str(record_id),
+            "--set",
+            "title=Brass gate valve GV-20",
+            "--set",
+            "description=Manual shut-off for water lines.",
+        ]
+    )
+    assert result.exit_code == 0, result.output
+
+    found = await invoke(["search", "products", "brass gate valve manual shut-off", "--k", "1"])
+    assert found.exit_code == 0, found.output
+    assert "Brass gate valve" in found.stdout
+    assert "Old rusty valve" not in found.stdout
+
+
+async def test_record_edit_of_a_non_embedded_field_leaves_the_vector_untouched(
+    session_factory: SessionFactory,
+) -> None:
+    await invoke(["collection", "create", "books", *field_args(BOOKS_FIELD_SPECS)])
+    added = await invoke(
+        [
+            "record",
+            "add",
+            "books",
+            *set_args(
+                {
+                    "author": "Stanisław Lem",
+                    "published": "1961-05-04",
+                    "genres": "sci-fi",
+                    "in_print": "y",
+                    "shelf_code": "A-12",
+                }
+            ),
+        ],
+    )
+    assert added.exit_code == 0, added.output
+
+    async with session_factory() as session:
+        record = await session.scalar(select(RecordModel))
+        assert record is not None
+        record_id = record.id
+        embedding_before = await session.get(EmbeddingModel, record_id)
+        assert embedding_before is not None
+        before = list(embedding_before.vec)
+
+    result = await invoke(["record", "edit", "books", str(record_id), "--set", "shelf_code=B-01"])
+    assert result.exit_code == 0, result.output
+    assert "unchanged embedding" in result.stdout
+
+    async with session_factory() as session:
+        embedding_after = await session.get(EmbeddingModel, record_id)
+        assert embedding_after is not None
+        reloaded = await session.get(RecordModel, record_id)
+        assert reloaded is not None
+        assert reloaded.payload["shelf_code"] == "B-01"
+        after = list(embedding_after.vec)
+
+    assert after == before  # byte-identical, no re-embed happened
+
+
+async def test_record_edit_unset_on_a_required_field_is_rejected(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+    record_id = await _added_record_id(session_factory)
+
+    async with session_factory() as session:
+        before = await session.get(RecordModel, record_id)
+        assert before is not None
+        before_payload = dict(before.payload)
+
+    result = await invoke(["record", "edit", "products", str(record_id), "--unset", "title"])
+
+    assert result.exit_code == 2
+    assert "required" in result.stdout or "required" in result.stderr
+    async with session_factory() as session:
+        after = await session.get(RecordModel, record_id)
+        assert after is not None
+        assert dict(after.payload) == before_payload
+
+
+async def test_record_edit_wizard_prefills_with_current_values(
+    session_factory: SessionFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No TTY, no --set/--unset -> wizard, pre-filled with the record's current payload."""
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+    record_id = await _added_record_id(session_factory)
+
+    import semantic_db.cli.commands.record as record_module
+    from semantic_db.cli import prompts as prompts_module
+
+    class ScriptedPromptSession:
+        def __init__(self, answers: list[str]) -> None:
+            self._answers = answers
+
+        def prompt(self, *args: object, default: str = "", **kwargs: object) -> str:
+            answer = self._answers.pop(0)
+            return answer if answer else default
+
+    class FakeStdin:
+        def isatty(self) -> bool:
+            return True
+
+    class FakeSys:
+        """CliRunner swaps `sys.stdin` per invoke, so patching the real one doesn't
+        stick — patch the name `record.py` looks up instead."""
+
+        stdin = FakeStdin()
+
+        def __getattr__(self, name: str) -> object:
+            import sys as real_sys
+
+            return getattr(real_sys, name)
+
+    # title, description, category, year, price — Enter (blank) keeps each default,
+    # except title which is changed. Then "Save?" -> "y".
+    answers = ["Pump A (rev 2)", "", "", "", "", "y"]
+    monkeypatch.setattr(
+        prompts_module, "PromptSession", lambda *a, **k: ScriptedPromptSession(answers)
+    )
+    monkeypatch.setattr(record_module, "sys", FakeSys())
+
+    result = await invoke(["record", "edit", "products", str(record_id)])
+
+    assert result.exit_code == 0, result.output
+    async with session_factory() as session:
+        record = await session.get(RecordModel, record_id)
+        assert record is not None
+        assert record.payload["title"] == "Pump A (rev 2)"
+        assert record.payload["category"] == "pumps"  # untouched default survives

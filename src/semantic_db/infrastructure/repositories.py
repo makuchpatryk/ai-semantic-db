@@ -1,4 +1,5 @@
 from sqlalchemy import delete, func, select
+from sqlalchemy import update as sa_update
 
 from semantic_db.domain.collection import Collection, CollectionSchema, CollectionSummary
 from semantic_db.domain.errors import DuplicateCollectionError
@@ -9,6 +10,7 @@ from semantic_db.infrastructure.mappers import (
     collection_from_model,
     collection_to_model,
     payload_from_jsonb,
+    payload_to_jsonb,
     record_from_model,
     record_to_model,
 )
@@ -162,6 +164,28 @@ class SqlRecordRepository:
             )
             return RecordDetail(record=record, model=row_dict["model"])
 
+    async def update(self, record: Record, vec: list[float] | None) -> Record:
+        """Write payload/rendered, and the embedding iff vec is given, in one transaction —
+        `add`'s no-divergence guarantee holds for edits too."""
+        async with self._session_factory() as session, session.begin():
+            await session.execute(
+                sa_update(RecordModel)
+                .where(
+                    RecordModel.id == record.id,
+                    RecordModel.collection_id == record.collection_id,
+                )
+                .values(payload=payload_to_jsonb(record.payload), rendered=record.rendered)
+            )
+            if vec is not None:
+                await session.execute(
+                    sa_update(EmbeddingModel)
+                    .where(EmbeddingModel.record_id == record.id)
+                    .values(model=self._model_name, vec=vec)
+                )
+            return record
+
+    # NOTE: `list` below shadows the builtin `list` for eagerly evaluated annotations in
+    # the rest of this class body — nothing after this point may spell out `list[...]`.
     async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]:
         async with self._session_factory() as session:
             stmt = (

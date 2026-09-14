@@ -1,13 +1,13 @@
 # semantic-db — PRD (MVP)
 
 **Version:** 1.1
-**Status:** In progress — M0–M5 shipped, M6–M9 open
+**Status:** In progress — M0–M8 shipped, M9 open
 **Author:** Patryk Makuch
-**Last reviewed against the code:** 2026-08-20
+**Last reviewed against the code:** 2026-09-14
 
 > Earlier drafts (0.1–0.6) scoped filters, hybrid retrieval, an eval harness, and LlamaIndex. All of that moved to §12 Roadmap. This document describes an MVP of **three commands**.
 
-> **Where the build stands:** the three core commands (`collection create`, `record add`, `search`) all work, in both the flag and the interactive path. `list`, `show`, and `delete` are built too; `edit` is not. Per-milestone status in §12, deviations from this spec in §12.1.
+> **Where the build stands:** the three core commands (`collection create`, `record add`, `search`) all work, in both the flag and the interactive path. `list`, `show`, `delete`, and `edit` are built too; only `collection edit` remains. Per-milestone status in §12, deviations from this spec in §12.1.
 
 ---
 
@@ -375,7 +375,7 @@ class RecordRepository(Protocol):
     async def get(self, collection_id: int, record_id: int) -> RecordDetail | None: ...  # M6
     async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]: ...  # M6
     async def count(self, collection_id: int) -> int: ...          # M6, reused by M7
-    async def update(self, record: Record, vec: list[float]) -> Record: ...   # M8, atomic re-embed
+    async def update(self, record: Record, vec: list[float] | None) -> Record: ...  # M8, atomic re-embed; vec=None skips it
     async def delete(self, collection_id: int, record_id: int) -> None: ...   # M7
 ```
 
@@ -445,12 +445,12 @@ Set all five as required status checks in branch protection, otherwise a red PR 
 | M5 | `search` with cosine top-k, Rich output, `--explain` | Query returns relevant records | **done** |
 | M6 | `collection list/show`, `record list/show` via `queries.py` | Corpus inspectable without `psql` | **done** — `Queries` façade extended with four methods, Rich table rendering, 12 new tests |
 | M7 | `collection delete` (cascade + typed confirm), `record delete` | Destructive paths covered by integration tests | **done** — both confirmation flows (`y/N` and typed-name) driven via `CliRunner(input=...)`, not just `--yes` |
-| M8 | `record edit` (re-render + re-embed atomically) | Payload, rendered text, and vector never diverge | open |
+| M8 | `record edit` (re-render + re-embed atomically) | Payload, rendered text, and vector never diverge | **done** — `RecordRepository.update` writes payload/rendered/vec in one transaction; re-embed is skipped unless an embed-flagged field's coerced value actually changed |
 | M9 | `collection edit` — additive and `embed`-toggle only, with full re-embed | Rejected changes fail with a clear reason | open |
 
 **Second-collection test before M5:** create a collection with a completely different shape (books: `author`, `published`, `genres`) and add a few records. If anything breaks, the schema abstraction is wrong, and it's much cheaper to find out here. **Done** — `books` lives in `tests/schemas.py` alongside `products` and runs through the rendering, validation, and CLI tests. It exercised `date`, `bool`, and `array<string>`; the schema abstraction held.
 
-Current test surface: 125 unit tests (domain, use cases against fakes, CLI flag paths) and 45 integration tests (repositories, Ollama, CLI end to end).
+Current test surface: 142 unit tests (domain, use cases against fakes, CLI flag paths) and 49 integration tests (repositories, Ollama, CLI end to end).
 
 ### 12.1 Deviations from this spec, as built
 

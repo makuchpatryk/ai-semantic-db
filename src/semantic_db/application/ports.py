@@ -34,6 +34,11 @@ class RecordRepository(Protocol):
 
     async def get(self, collection_id: int, record_id: int) -> RecordDetail | None: ...  # M6
 
+    async def update(self, record: Record, vec: list[float] | None) -> Record: ...  # M8
+
+    # NOTE: methods below define `list`, which shadows the builtin `list` for eagerly
+    # evaluated annotations in the rest of this class body — nothing after this point may
+    # spell out `list[...]` again.
     async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]: ...  # M6
 
     async def count(self, collection_id: int) -> int: ...  # M6

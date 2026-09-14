@@ -4,7 +4,7 @@
 
 `semantic-db` is a CLI tool that brings semantic search to your own data. Define a collection with typed fields, add records, and query them using plain English. Built on Postgres + pgvector (local storage) and Ollama (local embeddings).
 
-**Status:** MVP in progress. Milestones M0–M5 complete — define a collection, add records (flags or wizard), search them. Management commands (`list`, `show`, `edit`, `delete`) are M6–M9 and not built yet. [Roadmap →](PRD.md#12-milestones)
+**Status:** MVP in progress. Milestones M0–M8 complete — define a collection, add/list/show/edit/delete records, search them. Only `collection edit` (M9) is not built yet. [Roadmap →](PRD.md#12-milestones)
 
 **Quick links:**  
 [Getting Started](#getting-started) • [Why semantic-db?](#why-semantic-db) • [Configuration](#environment) • [Architecture](#architecture) • [Development](#development)
@@ -145,7 +145,7 @@ Locally, integration tests start their own Postgres via testcontainers unless `S
 
 **Rendered text is stored.** The exact string that produced the vector is persisted. Prevents silent drift if a template changes after embeddings are created.
 
-**CQRS-lite.** Write operations (add, update, delete) carry business rules and live as use cases. Reads are rule-free and route through a single `queries.py` façade — currently just `get_collection`; the rest arrives with M6.
+**CQRS-lite.** Write operations (add, edit, delete) carry business rules and live as use cases. Reads are rule-free and route through a single `queries.py` façade (`get_collection`, `list_collections`, `list_records`, `show_record`, ...).
 
 **Minimal ports.** Three boundaries: `EmbeddingProvider`, `CollectionRepository`, `RecordRepository`. Each earns its place with a second implementation or a test seam.
 
@@ -169,8 +169,10 @@ Dependencies flow inward. Enforced by `import-linter` contracts.
 | **M0–M3** | ✅ Complete | Schema definition, collection creation, embedding, `record add` (flags) |
 | **M4** | ✅ Complete | Interactive `record add` — schema-driven prompts, add-another loop |
 | **M5** | ✅ Complete | Semantic search: cosine top-k, Rich table, `--explain` |
-| **M6** | 📋 Planned | `collection list/show`, `record list/show` |
-| **M7–M9** | 📋 Planned | Deletes, `record edit` (re-embed), additive `collection edit` |
+| **M6** | ✅ Complete | `collection list/show`, `record list/show` |
+| **M7** | ✅ Complete | `collection delete`, `record delete` |
+| **M8** | ✅ Complete | `record edit` — atomic re-render + re-embed |
+| **M9** | 📋 Planned | Additive `collection edit` |
 
 Full specs: [`specs/`](specs/) · milestone table: [PRD §12](PRD.md#12-milestones)
 
@@ -184,7 +186,7 @@ Full specs: [`specs/`](specs/) · milestone table: [PRD §12](PRD.md#12-mileston
 
 ## Contributing
 
-Contributions welcome. Current focus: M6 (read commands). See [`specs/`](specs/) for planned work.
+Contributions welcome. Current focus: M9 (`collection edit`). See [`specs/`](specs/) for planned work.
 
 Start with:
 ```bash

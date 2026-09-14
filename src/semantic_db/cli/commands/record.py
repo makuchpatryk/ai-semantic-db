@@ -8,10 +8,11 @@ from rich.panel import Panel
 
 from semantic_db.application.use_cases.add_record import AddRecordCommand
 from semantic_db.application.use_cases.delete_record import DeleteRecordCommand
+from semantic_db.application.use_cases.edit_record import EditRecordCommand, EditRecordResult
 from semantic_db.cli.prompts import confirm, prompt_record_values
 from semantic_db.cli.render_preview import preview_panel
 from semantic_db.cli.runner import console, error_console, guard, run
-from semantic_db.cli.set_spec import parse_set_specs
+from semantic_db.cli.set_spec import parse_set_specs, parse_unset_specs
 from semantic_db.cli.tables import record_table
 from semantic_db.domain.errors import SemanticDbError
 from semantic_db.domain.record import Payload
@@ -21,6 +22,7 @@ from semantic_db.settings import get_settings
 record_app = typer.Typer(no_args_is_help=True, help="Add and inspect records.")
 
 SET_HELP = "Field value, repeatable: key=value (e.g. 'year=2019'). Coerced by declared type."
+UNSET_HELP = "Field to clear, repeatable: key (e.g. 'description')."
 
 
 @record_app.command("add")
@@ -87,6 +89,94 @@ def _add_interactive(collection: str) -> None:
 
 def _model_name() -> str:
     return get_settings().embedding_model
+
+
+@record_app.command("edit")
+def edit_cmd(
+    collection: Annotated[str, typer.Argument(help="Collection name")],
+    record_id: Annotated[int, typer.Argument(help="Record ID")],
+    set_: Annotated[list[str] | None, typer.Option("--set", "-s", help=SET_HELP)] = None,
+    unset: Annotated[list[str] | None, typer.Option("--unset", help=UNSET_HELP)] = None,
+) -> None:
+    """Edit a record; re-renders and re-embeds only if an embedded field changed."""
+    with guard():
+        if set_ or unset:
+            values = parse_set_specs(set_) if set_ else {}
+            unset_fields = parse_unset_specs(unset) if unset else frozenset()
+            collision = sorted(values.keys() & unset_fields)
+            if collision:
+                raise SemanticDbError(
+                    f"field(s) {', '.join(collision)} given to both --set and --unset"
+                )
+            _edit_with_values(collection, record_id, values, unset_fields)
+        elif not sys.stdin.isatty():
+            raise SemanticDbError(
+                "interactive record editing requires a TTY; pass values with --set/--unset"
+            )
+        else:
+            _edit_interactive(collection, record_id)
+
+
+def _edit_with_values(
+    collection: str,
+    record_id: int,
+    values: Mapping[str, object],
+    unset_fields: frozenset[str],
+) -> None:
+    """Edit a record with --set/--unset flags."""
+    cmd = EditRecordCommand(
+        collection_name=collection,
+        record_id=record_id,
+        set_values=values,
+        unset_fields=unset_fields,
+    )
+    started = perf_counter()
+    result = run(lambda container: container.edit_record.execute(cmd))
+    elapsed_ms = int((perf_counter() - started) * 1000)
+    _print_edit_result(result, elapsed_ms)
+
+
+def _edit_interactive(collection: str, record_id: int) -> None:
+    """Edit one record interactively, pre-filled with its current values. Unlike `add`'s
+    wizard there is no "another?" loop — it edits exactly the record given and exits."""
+    view = run(lambda c: c.queries.show_record(collection, record_id))
+    schema = view.schema
+    defaults = dict(view.detail.record.payload)
+
+    while True:
+        values = prompt_record_values(schema, defaults)
+        console.print(preview_panel(schema, values))
+
+        if not confirm("Save?", default=True):
+            continue
+
+        unset_fields = frozenset(schema.names) - values.keys()
+        cmd = EditRecordCommand(
+            collection_name=collection,
+            record_id=record_id,
+            set_values=values,
+            unset_fields=unset_fields,
+        )
+        started = perf_counter()
+
+        async def _execute(container, cmd=cmd):  # type: ignore[no-untyped-def]
+            return await container.edit_record.execute(cmd)
+
+        result = run(_execute)
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        _print_edit_result(result, elapsed_ms)
+        break
+
+
+def _print_edit_result(result: EditRecordResult, elapsed_ms: int) -> None:
+    console.print(Panel(result.record.rendered, title="Saved", title_align="left"))
+    if result.reembedded:
+        console.print(
+            f"[green]✓[/] updated record {result.record.id}, "
+            f"embedded with {_model_name()} ({elapsed_ms}ms)"
+        )
+    else:
+        console.print(f"[green]✓[/] updated record {result.record.id} (unchanged embedding)")
 
 
 @record_app.command("list")
