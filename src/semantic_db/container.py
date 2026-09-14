@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from semantic_db.application.queries import Queries
 from semantic_db.application.use_cases.add_record import AddRecord
 from semantic_db.application.use_cases.create_collection import CreateCollection
+from semantic_db.application.use_cases.delete_collection import DeleteCollection
+from semantic_db.application.use_cases.delete_record import DeleteRecord
 from semantic_db.application.use_cases.search_records import SearchRecords
 from semantic_db.infrastructure.db.session import create_engine, create_session_factory
 from semantic_db.infrastructure.ollama import OllamaEmbeddingProvider
@@ -18,6 +20,8 @@ class Container:
 
     create_collection: CreateCollection
     add_record: AddRecord
+    delete_record: DeleteRecord
+    delete_collection: DeleteCollection
     search_records: SearchRecords
     queries: Queries
     embedding_model: str
@@ -41,6 +45,8 @@ async def build_container(settings: Settings | None = None) -> AsyncIterator[Con
         yield Container(
             create_collection=CreateCollection(collections),
             add_record=AddRecord(collections, records, embedder),
+            delete_record=DeleteRecord(collections, records),
+            delete_collection=DeleteCollection(collections),
             search_records=SearchRecords(collections, records, embedder),
             queries=Queries(collections, records),
             embedding_model=settings.embedding_model,

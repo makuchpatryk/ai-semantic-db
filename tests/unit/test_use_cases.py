@@ -5,6 +5,11 @@ from semantic_db.application.use_cases.create_collection import (
     CreateCollection,
     CreateCollectionCommand,
 )
+from semantic_db.application.use_cases.delete_collection import (
+    DeleteCollection,
+    DeleteCollectionCommand,
+)
+from semantic_db.application.use_cases.delete_record import DeleteRecord, DeleteRecordCommand
 from semantic_db.application.use_cases.search_records import SearchRecords, SearchRecordsCommand
 from semantic_db.domain.errors import (
     CollectionNotFoundError,
@@ -12,6 +17,7 @@ from semantic_db.domain.errors import (
     EmbeddingModelMismatchError,
     EmbeddingUnavailableError,
     MissingRequiredFieldError,
+    RecordNotFoundError,
     SchemaError,
 )
 from tests.fakes import (
@@ -110,6 +116,50 @@ async def test_add_record_rejects_a_wrong_dimension_vector() -> None:
         await use_case.execute(AddRecordCommand("products", PRODUCT_VALUES))
 
     assert records.records == []
+
+
+async def test_delete_record_removes_the_target_and_leaves_others_untouched() -> None:
+    collections, records = await _seeded()
+    add = AddRecord(collections, records, FakeEmbeddingProvider())
+    kept = await add.execute(AddRecordCommand("products", PRODUCT_VALUES))
+    target = await add.execute(AddRecordCommand("products", {**PRODUCT_VALUES, "title": "Other"}))
+    assert target.id is not None
+
+    await DeleteRecord(collections, records).execute(DeleteRecordCommand("products", target.id))
+
+    remaining_ids = [r.id for r in records.records]
+    assert remaining_ids == [kept.id]
+
+
+async def test_delete_record_rejects_an_unknown_collection() -> None:
+    _, records = await _seeded()
+    use_case = DeleteRecord(InMemoryCollectionRepository(), records)
+
+    with pytest.raises(CollectionNotFoundError):
+        await use_case.execute(DeleteRecordCommand("products", 1))
+
+
+async def test_delete_record_rejects_an_unknown_record_id() -> None:
+    collections, records = await _seeded()
+    use_case = DeleteRecord(collections, records)
+
+    with pytest.raises(RecordNotFoundError):
+        await use_case.execute(DeleteRecordCommand("products", 999))
+
+
+async def test_delete_collection_removes_it() -> None:
+    collections, _ = await _seeded()
+
+    await DeleteCollection(collections).execute(DeleteCollectionCommand("products"))
+
+    assert await collections.get("products") is None
+
+
+async def test_delete_collection_rejects_an_unknown_name() -> None:
+    collections = InMemoryCollectionRepository()
+
+    with pytest.raises(CollectionNotFoundError):
+        await DeleteCollection(collections).execute(DeleteCollectionCommand("ghosts"))
 
 
 async def _with_records(

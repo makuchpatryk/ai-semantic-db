@@ -165,6 +165,47 @@ async def test_show_record_wrong_collection(
 
 
 @pytest.mark.asyncio
+async def test_collection_stats(
+    repos: tuple[InMemoryCollectionRepository, InMemoryRecordRepository],
+) -> None:
+    collections, records = repos
+    queries = Queries(collections, records)
+
+    schema = CollectionSchema(
+        fields=(
+            FieldDefinition(name="title", type=FieldType.TEXT, embed=True),
+            FieldDefinition(name="description", type=FieldType.TEXT, embed=False),
+        )
+    )
+    coll = await collections.create(Collection(name="products", schema=schema))
+    assert coll.id is not None
+
+    for i in range(3):
+        record = Record(
+            collection_id=coll.id,
+            payload={"title": f"Product {i}"},
+            rendered=f"Product {i}",
+        )
+        await records.add(coll.id, record, [0.0] * 1024)
+
+    field_count, record_count = await queries.collection_stats("products")
+
+    assert field_count == 2
+    assert record_count == 3
+
+
+@pytest.mark.asyncio
+async def test_collection_stats_unknown_name(
+    repos: tuple[InMemoryCollectionRepository, InMemoryRecordRepository],
+) -> None:
+    collections, records = repos
+    queries = Queries(collections, records)
+
+    with pytest.raises(CollectionNotFoundError):
+        await queries.collection_stats("ghosts")
+
+
+@pytest.mark.asyncio
 async def test_show_collection_not_found(
     repos: tuple[InMemoryCollectionRepository, InMemoryRecordRepository],
 ) -> None:

@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from semantic_db.domain.collection import Collection, CollectionSchema, CollectionSummary
 from semantic_db.domain.errors import DuplicateCollectionError
@@ -61,6 +61,12 @@ class SqlCollectionRepository:
                 )
                 results.append(summary)
             return results
+
+    async def delete(self, name: str) -> None:
+        """FK ON DELETE CASCADE removes the collection's records and their embeddings."""
+        async with self._session_factory() as session, session.begin():
+            stmt = delete(CollectionModel).where(CollectionModel.name == name)
+            await session.execute(stmt)
 
 
 class SqlRecordRepository:
@@ -193,3 +199,11 @@ class SqlRecordRepository:
             )
             result = await session.scalar(stmt)
             return int(result) if result is not None else 0
+
+    async def delete(self, collection_id: int, record_id: int) -> None:
+        """FK ON DELETE CASCADE removes the embedding row."""
+        async with self._session_factory() as session, session.begin():
+            stmt = delete(RecordModel).where(
+                RecordModel.id == record_id, RecordModel.collection_id == collection_id
+            )
+            await session.execute(stmt)

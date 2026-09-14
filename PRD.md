@@ -7,7 +7,7 @@
 
 > Earlier drafts (0.1–0.6) scoped filters, hybrid retrieval, an eval harness, and LlamaIndex. All of that moved to §12 Roadmap. This document describes an MVP of **three commands**.
 
-> **Where the build stands:** the three core commands (`collection create`, `record add`, `search`) all work, in both the flag and the interactive path. The management commands of §7 (`list`, `show`, `edit`, `delete`) are not built yet. Per-milestone status in §12, deviations from this spec in §12.1.
+> **Where the build stands:** the three core commands (`collection create`, `record add`, `search`) all work, in both the flag and the interactive path. `list`, `show`, and `delete` are built too; `edit` is not. Per-milestone status in §12, deviations from this spec in §12.1.
 
 ---
 
@@ -444,13 +444,13 @@ Set all five as required status checks in branch protection, otherwise a red PR 
 | M4 | Interactive `record add` with schema-driven prompts and the add-another loop | 30+ records entered by hand without pain | **done** |
 | M5 | `search` with cosine top-k, Rich output, `--explain` | Query returns relevant records | **done** |
 | M6 | `collection list/show`, `record list/show` via `queries.py` | Corpus inspectable without `psql` | **done** — `Queries` façade extended with four methods, Rich table rendering, 12 new tests |
-| M7 | `collection delete` (cascade + typed confirm), `record delete` | Destructive paths covered by integration tests | open |
+| M7 | `collection delete` (cascade + typed confirm), `record delete` | Destructive paths covered by integration tests | **done** — both confirmation flows (`y/N` and typed-name) driven via `CliRunner(input=...)`, not just `--yes` |
 | M8 | `record edit` (re-render + re-embed atomically) | Payload, rendered text, and vector never diverge | open |
 | M9 | `collection edit` — additive and `embed`-toggle only, with full re-embed | Rejected changes fail with a clear reason | open |
 
 **Second-collection test before M5:** create a collection with a completely different shape (books: `author`, `published`, `genres`) and add a few records. If anything breaks, the schema abstraction is wrong, and it's much cheaper to find out here. **Done** — `books` lives in `tests/schemas.py` alongside `products` and runs through the rendering, validation, and CLI tests. It exercised `date`, `bool`, and `array<string>`; the schema abstraction held.
 
-Current test surface: 93 unit tests, 3 skipped (domain, use cases against fakes, CLI flag paths) and 16 integration tests (repositories, Ollama, CLI end to end).
+Current test surface: 125 unit tests (domain, use cases against fakes, CLI flag paths) and 45 integration tests (repositories, Ollama, CLI end to end).
 
 ### 12.1 Deviations from this spec, as built
 
@@ -465,6 +465,7 @@ Current test surface: 93 unit tests, 3 skipped (domain, use cases against fakes,
 | `RecordRepository.embedding_models` added | §9.1 | `search` must reject a corpus embedded with a different model rather than return meaningless distances. |
 | CI workflow landed after M5, not in M0 | §11 | Slipped, then caught 15 accumulated lint and type failures the moment it ran. R6's point, demonstrated. |
 | `record add` requires a TTY for the interactive path | §5.1 | Without a TTY it fails naming `--set`, instead of hanging on a prompt nothing will answer. |
+| Delete confirmations use `typer.confirm`/`click.prompt`, not `prompts.confirm()` | §7.4, M7 | `prompts.confirm()` needs a real TTY (`prompt_toolkit`), so it can't be driven by `CliRunner(input=...)`. Click's own prompt machinery can, and the done-when for M7 requires the confirm/typed-name logic itself under integration test, not just the `--yes` bypass. |
 
 ---
 

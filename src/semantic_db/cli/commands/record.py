@@ -7,9 +7,10 @@ import typer
 from rich.panel import Panel
 
 from semantic_db.application.use_cases.add_record import AddRecordCommand
+from semantic_db.application.use_cases.delete_record import DeleteRecordCommand
 from semantic_db.cli.prompts import confirm, prompt_record_values
 from semantic_db.cli.render_preview import preview_panel
-from semantic_db.cli.runner import console, guard, run
+from semantic_db.cli.runner import console, error_console, guard, run
 from semantic_db.cli.set_spec import parse_set_specs
 from semantic_db.cli.tables import record_table
 from semantic_db.domain.errors import SemanticDbError
@@ -131,3 +132,19 @@ def show_cmd(
     console.print()
     model_text = view.detail.model if view.detail.model else "(no embedding)"
     console.print(f"[bold]Model:[/] {model_text}")
+
+
+@record_app.command("delete")
+def delete_cmd(
+    collection: Annotated[str, typer.Argument(help="Collection name")],
+    record_id: Annotated[int, typer.Argument(help="Record ID")],
+    yes: Annotated[bool, typer.Option("--yes", help="Skip confirmation")] = False,
+) -> None:
+    """Delete a record and its embedding."""
+    if not yes and not typer.confirm(f"Delete record {record_id} from '{collection}'?"):
+        error_console.print("Aborted.")
+        raise typer.Exit(1)
+
+    cmd = DeleteRecordCommand(collection_name=collection, record_id=record_id)
+    run(lambda container: container.delete_record.execute(cmd))
+    console.print(f"[green]✓[/] deleted record {record_id}")

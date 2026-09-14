@@ -22,6 +22,8 @@ class CollectionRepository(Protocol):
 
     async def list(self) -> list[CollectionSummary]: ...  # M6
 
+    async def delete(self, name: str) -> None: ...  # M7
+
 
 class RecordRepository(Protocol):
     async def add(self, collection_id: int, record: Record, vec: list[float]) -> Record: ...
@@ -35,3 +37,5 @@ class RecordRepository(Protocol):
     async def list(self, collection_id: int, limit: int, offset: int) -> list[Record]: ...  # M6
 
     async def count(self, collection_id: int) -> int: ...  # M6
+
+    async def delete(self, collection_id: int, record_id: int) -> None: ...  # M7

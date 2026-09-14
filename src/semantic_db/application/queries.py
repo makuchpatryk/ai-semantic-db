@@ -58,6 +58,13 @@ class Queries:
             offset=offset,
         )
 
+    async def collection_stats(self, name: str) -> tuple[int, int]:
+        """Field and record counts, for the CLI's pre-delete summary line."""
+        collection = await self.get_collection(name)
+        assert collection.id is not None
+        record_count = await self._records.count(collection.id)
+        return len(collection.schema.fields), record_count
+
     async def show_record(self, name: str, record_id: int) -> RecordView:
         """Show a single record with full details."""
         collection = await self.get_collection(name)

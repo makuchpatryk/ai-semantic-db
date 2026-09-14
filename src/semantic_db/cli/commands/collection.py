@@ -1,9 +1,11 @@
 from typing import Annotated
 
+import click
 import typer
 from rich.table import Table
 
 from semantic_db.application.use_cases.create_collection import CreateCollectionCommand
+from semantic_db.application.use_cases.delete_collection import DeleteCollectionCommand
 from semantic_db.cli.field_spec import parse_field_spec
 from semantic_db.cli.prompts import PromptAborted, confirm, prompt_field_definitions
 from semantic_db.cli.render_preview import print_schema_preview
@@ -104,3 +106,25 @@ def show_cmd(name: Annotated[str, typer.Argument(help="Collection name")]) -> No
 
     console.print(table)
     print_schema_preview(collection.schema)
+
+
+@collection_app.command("delete")
+def delete_cmd(
+    name: Annotated[str, typer.Argument(help="Collection name")],
+    yes: Annotated[bool, typer.Option("--yes", help="Skip confirmation")] = False,
+) -> None:
+    """Delete a collection, its records, and their embeddings."""
+    if not yes:
+        field_count, record_count = run(lambda c: c.queries.collection_stats(name))
+        console.print(
+            f"This deletes collection '{name}': "
+            f"{field_count} fields, {record_count} records, {record_count} embeddings."
+        )
+        typed = click.prompt("Type the collection name to confirm", default="", show_default=False)
+        if typed.strip() != name:
+            error_console.print("Aborted.")
+            raise typer.Exit(1)
+
+    cmd = DeleteCollectionCommand(name=name)
+    run(lambda container: container.delete_collection.execute(cmd))
+    console.print("[green]✓[/] deleted")

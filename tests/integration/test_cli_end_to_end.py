@@ -14,9 +14,9 @@ pytestmark = pytest.mark.integration
 runner = CliRunner()
 
 
-async def invoke(args: list[str]) -> Result:
+async def invoke(args: list[str], input: str | None = None) -> Result:
     """The CLI owns its event loop (`asyncio.run`), so it runs off the test's loop."""
-    return await asyncio.to_thread(lambda: runner.invoke(app, args))
+    return await asyncio.to_thread(lambda: runner.invoke(app, args, input=input))
 
 
 def field_args(specs: list[str]) -> list[str]:
@@ -367,3 +367,144 @@ async def test_record_show_not_found(session_factory: SessionFactory) -> None:
 
     assert result.exit_code == 2
     assert "not found" in result.stdout or "not found" in result.stderr
+
+
+async def _added_record_id(session_factory: SessionFactory) -> int:
+    async with session_factory() as session:
+        record = await session.scalar(select(RecordModel))
+        assert record is not None
+        assert record.id is not None
+        return record.id
+
+
+async def test_record_delete_with_yes_removes_the_record_and_its_embedding(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+    record_id = await _added_record_id(session_factory)
+
+    result = await invoke(["record", "delete", "products", str(record_id), "--yes"])
+
+    assert result.exit_code == 0, result.output
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RecordModel)) == 0
+        assert await session.scalar(select(func.count()).select_from(EmbeddingModel)) == 0
+
+
+async def test_record_delete_confirmed_with_y_deletes(session_factory: SessionFactory) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+    record_id = await _added_record_id(session_factory)
+
+    result = await invoke(["record", "delete", "products", str(record_id)], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RecordModel)) == 0
+
+
+async def test_record_delete_declined_leaves_the_record(session_factory: SessionFactory) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+    record_id = await _added_record_id(session_factory)
+
+    result = await invoke(["record", "delete", "products", str(record_id)], input="n\n")
+
+    assert result.exit_code == 1
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RecordModel)) == 1
+
+
+async def test_record_delete_defaults_to_no_on_bare_enter(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+    record_id = await _added_record_id(session_factory)
+
+    result = await invoke(["record", "delete", "products", str(record_id)], input="\n")
+
+    assert result.exit_code == 1
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(RecordModel)) == 1
+
+
+async def test_record_delete_unknown_id_is_rejected(session_factory: SessionFactory) -> None:
+    await create_products()
+
+    result = await invoke(["record", "delete", "products", "999", "--yes"])
+
+    assert result.exit_code == 2
+
+
+async def test_record_delete_unknown_collection_is_rejected(
+    session_factory: SessionFactory,
+) -> None:
+    result = await invoke(["record", "delete", "ghosts", "1", "--yes"])
+
+    assert result.exit_code == 2
+
+
+async def test_collection_delete_with_yes_cascades_to_records_and_embeddings(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+    await add_product("Valve B", "Desc B", "valves")
+
+    result = await invoke(["collection", "delete", "products", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(CollectionModel)) == 0
+        assert await session.scalar(select(func.count()).select_from(RecordModel)) == 0
+        assert await session.scalar(select(func.count()).select_from(EmbeddingModel)) == 0
+
+
+async def test_collection_delete_with_yes_skips_display_and_prompt(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+
+    result = await invoke(["collection", "delete", "products", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "This deletes collection" not in result.output
+    assert "Type the collection name" not in result.output
+
+
+async def test_collection_delete_confirmed_with_typed_name_deletes(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+    await add_product("Pump A", "Desc A", "pumps")
+
+    result = await invoke(["collection", "delete", "products"], input="products\n")
+
+    assert result.exit_code == 0, result.output
+    assert "This deletes collection 'products': 5 fields, 1 records, 1 embeddings." in (
+        result.output
+    )
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(CollectionModel)) == 0
+
+
+async def test_collection_delete_mismatched_typed_name_aborts(
+    session_factory: SessionFactory,
+) -> None:
+    await create_products()
+
+    result = await invoke(["collection", "delete", "products"], input="not-products\n")
+
+    assert result.exit_code == 1
+    async with session_factory() as session:
+        assert await session.scalar(select(func.count()).select_from(CollectionModel)) == 1
+
+
+async def test_collection_delete_unknown_name_is_rejected(
+    session_factory: SessionFactory,
+) -> None:
+    result = await invoke(["collection", "delete", "ghosts", "--yes"])
+
+    assert result.exit_code == 2

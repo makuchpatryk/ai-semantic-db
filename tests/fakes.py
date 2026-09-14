@@ -22,6 +22,9 @@ class InMemoryCollectionRepository:
     async def get(self, name: str) -> Collection | None:
         return self.collections.get(name)
 
+    async def delete(self, name: str) -> None:
+        self.collections.pop(name, None)
+
     async def list(self) -> list[CollectionSummary]:
         summaries = []
         for collection in sorted(self.collections.values(), key=lambda c: c.name):
@@ -92,6 +95,13 @@ class InMemoryRecordRepository:
 
     async def count(self, collection_id: int) -> int:
         return sum(1 for r in self.records if r.collection_id == collection_id)
+
+    async def delete(self, collection_id: int, record_id: int) -> None:
+        for index, record in enumerate(self.records):
+            if record.collection_id == collection_id and record.id == record_id:
+                del self.records[index]
+                del self.vectors[index]
+                return
 
 
 class FakeEmbeddingProvider:
